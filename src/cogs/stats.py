@@ -404,7 +404,7 @@ class Stats(commands.Cog):
             return
 
         embed = discord.Embed(
-            title=f"Namlog for {player['name']}",
+            title=f"Namelog for {player['name']}",
             url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}",
             timestamp=dt.datetime.now(dt.UTC),
         )
