@@ -41,11 +41,11 @@ class Stats(commands.Cog):
     ):
         # if multiple names are provided,
         # split them into a list and fetch MMR data for each player
-        if len(names.split(",")) == 1 or names is None:
-            # If no names are provided, default to the user's ID
-            if names is None:
-                names = str(interaction.user.id)
 
+        # If no names are provided, default to the user's ID
+        if names is None:
+            names = str(interaction.user.id)
+        if len(names.split(",")) == 1:
             # Call API to fetch players MMR data
             player = await data_handler.fetch_player_info(names, season, game_mode)
 
@@ -70,7 +70,7 @@ class Stats(commands.Cog):
                 title=f"S{season} MMR - MKWorld{game_mode.upper()}",
                 url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
                 colour=int(f"0x{rank_data['color'][1:]}", 16),
-                timestamp=datetime.datetime.now(datetime.UTC),
+                timestamp=dt.datetime.now(dt.UTC),
             )
 
             embed.add_field(
@@ -199,7 +199,10 @@ class Stats(commands.Cog):
 
         embed.set_image(url="attachment://mmr_chart.png")
         embed.add_field(name="MMR", value=f"{player['mmr']}", inline=True)
-        embed.add_field(name="Peak MMR", value=f"{player['maxMmr']}", inline=True)
+        try:
+            embed.add_field(name="Peak MMR", value=f"{player['maxMmr']}", inline=True)
+        except KeyError:
+            embed.add_field(name="Peak MMR", value="N/A", inline=True)
         embed.add_field(
             name="Events Played", value=f"{player['eventsPlayed']}", inline=True
         )
@@ -225,7 +228,12 @@ class Stats(commands.Cog):
             value=f"{player['averageLastTen']:.1f}",
             inline=True,
         )
-        embed.add_field(name="Largest Gain", value=player["largestGain"], inline=True)
+        try:
+            embed.add_field(
+                name="Largest Gain", value=player["largestGain"], inline=True
+            )
+        except KeyError:
+            embed.add_field(name="Largest Gain", value="N/A", inline=True)
 
         # Row 4: Score stats of No SQ
         embed.add_field(
@@ -238,9 +246,15 @@ class Stats(commands.Cog):
             value=f"{player['noSQAverageLastTen']:.1f}",
             inline=True,
         )
-        embed.add_field(
-            name="Partner Avg.", value=f"{player['partnerAverage']:.1f}", inline=True
-        )
+
+        try:
+            embed.add_field(
+                name="Partner Avg.",
+                value=f"{player['partnerAverage']:.1f}",
+                inline=True,
+            )
+        except KeyError:
+            embed.add_field(name="Partner Avg.", value="N/A", inline=True)
 
         embed.set_footer(
             text="MKCentral Lounge",
