@@ -1,6 +1,6 @@
 [project]
 name = "StatsBot_MKWorld"
-version = "0.1.0"
+version = "0.1.0_staging"
 description = ""
 requires-python = ">=3.13"
 dependencies = [
