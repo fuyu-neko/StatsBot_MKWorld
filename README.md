@@ -18,6 +18,7 @@ A Discord bot that provides player statistics and Mogi data for **Mario Kart Wor
 - `/table` — Look up a specific match by Table ID
 - `/fc` — Retrieve a player's Nintendo Switch Friend Code
 - `/namelog` — View a player's name change history
+- `/calc` — Calculate expected MMR changes for a specific match by Table ID
 
 Players can be looked up by name, MKC ID, Discord ID, or Friend Code.
 
@@ -103,6 +104,7 @@ This project is licensed under the [MIT License](LICENSE).
 - `/table` — テーブル ID で特定の試合を検索
 - `/fc` — プレイヤーの Nintendo Switch フレンドコードを取得
 - `/namelog` — プレイヤーの名前変更履歴を表示
+- `/calc` — テーブル ID を指定して、予想される MMR 変動を計算
 
 プレイヤーは名前、MKC ID、Discord ID、フレンドコードで検索できます。
 

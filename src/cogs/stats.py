@@ -11,6 +11,7 @@ import API.get_mkworld as api
 import common.constants as constants
 import common.data_handler as data_handler
 from common.plotting import create_plot
+from common.calculation import calc_mmr_deltas
 
 # load environment variables from .env file
 load_dotenv()
@@ -452,6 +453,57 @@ class Stats(commands.Cog):
             icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
         )
 
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="calc", description="Calculate Expected MMR changes")
+    @app_commands.describe(table_id="Table ID for the match")
+    async def calc(self, interaction: discord.Interaction, table_id: str):
+        table_details = await api.fetch_table(table_id=table_id)
+        if table_details is None:
+            await interaction.response.send_message("Table not found!", ephemeral=True)
+            return
+
+        calced_deltas = calc_mmr_deltas(table_details)
+
+        mmr_message = "```\n"
+        names = []
+        old_mmrs = []
+        new_mmrs = []
+        deltas = []
+        for i, team in enumerate(table_details["teams"]):
+            for player in team["scores"]:
+                names.append(player["playerName"])
+                old_mmrs.append(player["prevMmr"])
+                new_mmrs.append(player["prevMmr"] + calced_deltas[i])
+                deltas.append(calced_deltas[i])
+        len_names = max(map(len, names))
+        len_old_mmrs = len(str(max(old_mmrs)))
+        len_new_mmrs = len(str(max(new_mmrs)))
+        len_deltas = len(str(max(deltas)))
+        for i in range(len(names)):
+            if (
+                i % (table_details["numPlayers"] / table_details["numTeams"]) == 0
+                and table_details["numPlayers"] != table_details["numTeams"]
+                and i != 0
+            ):
+                mmr_message += "\n"
+            mmr_message += f"{names[i].ljust(len_names)}: {str(old_mmrs[i]).ljust(len_old_mmrs)} --> {str(new_mmrs[i]).ljust(len_new_mmrs)} ({str(deltas[i]).rjust(len_deltas)})\n"  # noqa: E501
+        mmr_message += "```"
+
+        embed = discord.Embed(
+            title=f"Expected MMR Changes for Table ID: {table_id}",
+            url=os.getenv("WEBSITE_URL") + f"/mkworld/TableDetails/{table_id}",
+            colour=0x1DA3DD,
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+        embed.add_field(name="Expected MMR Changes", value=mmr_message, inline=False)
+        embed.set_image(
+            url=(os.getenv("WEBSITE_URL") + f"/TableImage/{table_details['id']}.png")
+        )
+        embed.set_footer(
+            text="MKCentral Lounge",
+            icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+        )
         await interaction.response.send_message(embed=embed)
 
 
