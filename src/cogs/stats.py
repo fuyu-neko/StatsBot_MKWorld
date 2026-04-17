@@ -389,7 +389,7 @@ class Stats(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="namelog", description="A dummy command for testing")
+    @app_commands.command(name="namelog", description="View a player's name change history")
     @app_commands.describe(name="Player name, discord id, or mkc id (optional)")
     async def namelog(self, interaction: discord.Interaction, name: str | None = None):
         if name is None:
