@@ -389,7 +389,9 @@ class Stats(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="namelog", description="View a player's name change history")
+    @app_commands.command(
+        name="namelog", description="View a player's name change history"
+    )
     @app_commands.describe(name="Player name, discord id, or mkc id (optional)")
     async def namelog(self, interaction: discord.Interaction, name: str | None = None):
         if name is None:
@@ -474,7 +476,11 @@ class Stats(commands.Cog):
             for player in team["scores"]:
                 names.append(player["playerName"])
                 old_mmrs.append(player["prevMmr"])
-                new_mmrs.append(player["prevMmr"] + calced_deltas[i])
+                new_mmrs.append(
+                    player["prevMmr"] + calced_deltas[i]
+                    if player["prevMmr"] + calced_deltas[i] >= 0
+                    else 0
+                )
                 deltas.append(calced_deltas[i])
         len_names = max(map(len, names))
         len_old_mmrs = len(str(max(old_mmrs)))
