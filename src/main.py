@@ -16,17 +16,15 @@ else:
 logging.getLogger("discord").setLevel(logging.INFO)
 logging.getLogger("matplotlib").setLevel(logging.INFO)
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-
 cogs = ["cogs.stats", "cogs.staff"]
 
 
 class StatsBot(commands.AutoShardedBot):
-    def __init__(self, intents):
+    def __init__(self):
+        # command_prefix is required by commands.Bot; unused since all commands are slash commands.
         super().__init__(
-            command_prefix=commands.when_mentioned_or("^"), intents=intents
+            command_prefix=commands.when_mentioned,
+            intents=discord.Intents.default(),
         )
 
     async def on_ready(self):
@@ -37,7 +35,7 @@ class StatsBot(commands.AutoShardedBot):
         await self.tree.sync()
 
 
-bot = StatsBot(intents=intents)
+bot = StatsBot()
 
 
 @bot.event
