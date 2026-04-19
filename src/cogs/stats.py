@@ -266,29 +266,61 @@ class Stats(commands.Cog):
         await interaction.followup.send(embed=embed, file=file)
 
     @app_commands.command(
-        name="lastmatch", description="Show MKWorld Player Last Match"
+        name="lastmatch", description="Show MKWorld Player Last Verified Match"
     )
-    @app_commands.describe(name="Lounge name, discord id, mkc id (optional)")
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        game_mode="Game mode (default: most recent across both 12p and 24p)",
+    )
+    @app_commands.choices(
+        game_mode=[
+            app_commands.Choice(name="24p", value="24p"),
+            app_commands.Choice(name="12p", value="12p"),
+        ]
+    )
     async def lastmatch(
-        self, interaction: discord.Interaction, name: str | None = None
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        game_mode: str | None = None,
     ):
         if name is None:
             name = str(interaction.user.id)
 
-        player = await data_handler.fetch_player_info(
-            name, season=os.getenv("CURRENT_SEASON"), game_mode="24p"
-        )
-        if player is None:
-            await interaction.response.send_message("Player not found!", ephemeral=True)
-            return
+        season = os.getenv("CURRENT_SEASON")
+        modes = [game_mode] if game_mode is not None else ["24p", "12p"]
 
-        for event in player["mmrChanges"]:
-            if event["reason"] == "Table":
-                last_event = event
+        candidates = []
+        player_name_for_error = name
+        for mode in modes:
+            mode_player = await data_handler.fetch_player_info(
+                name, season=season, game_mode=mode
+            )
+            if mode_player is None:
+                continue
+            player_name_for_error = mode_player["name"]
+            for event in mode_player["mmrChanges"]:
+                if event["reason"] != "Table":
+                    continue
+                details = await api.fetch_table(table_id=event["changeId"])
+                if details is None or "verifiedOn" not in details:
+                    continue
+                candidates.append((mode_player, event, details))
                 break
 
+        if not candidates:
+            await interaction.response.send_message(
+                f"No verified matches found for {player_name_for_error}.",
+                ephemeral=True,
+            )
+            return
+
+        player, last_event, table_details = max(
+            candidates,
+            key=lambda c: datetime.fromisoformat(c[2]["createdOn"]),
+        )
+
         page_url = os.getenv("WEBSITE_URL") + f"/TableDetails/{last_event['changeId']}"
-        table_details = await api.fetch_table(table_id=last_event["changeId"])
 
         embed = discord.Embed(
             title=f"Table ID: {last_event['changeId']}", url=page_url, colour=0x1DA3DD
@@ -296,15 +328,17 @@ class Stats(commands.Cog):
         embed.add_field(name="Table ID", value=table_details["id"], inline=True)
         embed.add_field(name="Format", value=table_details["format"], inline=True)
         embed.add_field(name="Tier", value=table_details["tier"], inline=True)
+
         timestamp_d1 = datetime.fromisoformat(table_details["createdOn"])
         unix_time1 = int(timestamp_d1.timestamp())
-
-        timestamp_d2 = datetime.fromisoformat(table_details["verifiedOn"])
-        unix_time2 = int(timestamp_d2.timestamp())
 
         embed.add_field(
             name="Created On", value=f"Changed On <t:{unix_time1}:s>", inline=False
         )
+
+        timestamp_d2 = datetime.fromisoformat(table_details["verifiedOn"])
+        unix_time2 = int(timestamp_d2.timestamp())
+
         embed.add_field(
             name="Verified On", value=f"Changed On <t:{unix_time2}:s>", inline=False
         )
@@ -328,7 +362,7 @@ class Stats(commands.Cog):
             mmr_message += f"{names[i].ljust(len_names)}: {str(old_mmrs[i]).ljust(len_old_mmrs)} --> {str(new_mmrs[i]).ljust(len_new_mmrs)} ({str(deltas[i]).rjust(len_deltas)})\n"  # noqa: E501
         mmr_message += "```"
 
-        embed.add_field(name="MMR Changes ", value=mmr_message, inline=True)
+        embed.add_field(name="MMR Changes", value=mmr_message, inline=True)
 
         embed.set_image(
             url=os.getenv("WEBSITE_URL") + f"/TableImage/{last_event['changeId']}.png"
