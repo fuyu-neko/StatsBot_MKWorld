@@ -296,18 +296,23 @@ class Stats(commands.Cog):
         embed.add_field(name="Table ID", value=table_details["id"], inline=True)
         embed.add_field(name="Format", value=table_details["format"], inline=True)
         embed.add_field(name="Tier", value=table_details["tier"], inline=True)
+
         timestamp_d1 = datetime.fromisoformat(table_details["createdOn"])
         unix_time1 = int(timestamp_d1.timestamp())
-
-        timestamp_d2 = datetime.fromisoformat(table_details["verifiedOn"])
-        unix_time2 = int(timestamp_d2.timestamp())
 
         embed.add_field(
             name="Created On", value=f"Changed On <t:{unix_time1}:s>", inline=False
         )
-        embed.add_field(
-            name="Verified On", value=f"Changed On <t:{unix_time2}:s>", inline=False
-        )
+
+        if "verifiedOn" in table_details:
+            timestamp_d2 = datetime.fromisoformat(table_details["verifiedOn"])
+            unix_time2 = int(timestamp_d2.timestamp())
+
+            embed.add_field(
+                name="Verified On", value=f"Changed On <t:{unix_time2}:s>", inline=False
+            )
+        else:
+            embed.add_field(name="Verified On", value="Unverified", inline=False)
 
         mmr_message = "```\n"
         names = []
@@ -350,17 +355,31 @@ class Stats(commands.Cog):
         embed.add_field(name="Table ID", value=table_details["id"], inline=True)
         embed.add_field(name="Format", value=table_details["format"], inline=True)
         embed.add_field(name="Tier", value=table_details["tier"], inline=True)
+
         timestamp_d1 = datetime.fromisoformat(table_details["createdOn"])
         unix_time1 = int(timestamp_d1.timestamp())
-
-        timestamp_d2 = datetime.fromisoformat(table_details["verifiedOn"])
-        unix_time2 = int(timestamp_d2.timestamp())
 
         embed.add_field(
             name="Created On", value=f"Changed On <t:{unix_time1}:s>", inline=False
         )
-        embed.add_field(
-            name="Verified On", value=f"Changed On <t:{unix_time2}:s>", inline=False
+
+        is_verified = "verifiedOn" in table_details
+
+        if is_verified:
+            timestamp_d2 = datetime.fromisoformat(table_details["verifiedOn"])
+            unix_time2 = int(timestamp_d2.timestamp())
+
+            embed.add_field(
+                name="Verified On", value=f"Changed On <t:{unix_time2}:s>", inline=False
+            )
+        else:
+            embed.add_field(
+                name="Verified On",
+                value="Unverified — MMR changes shown are expected values and may differ from the final result.",
+                inline=False,
+            )
+        calced_deltas = (
+            None if is_verified else calc_mmr_deltas(table_details)
         )
 
         mmr_message = "```\n"
@@ -368,12 +387,16 @@ class Stats(commands.Cog):
         old_mmrs = []
         new_mmrs = []
         deltas = []
-        for team in table_details["teams"]:
+        for i, team in enumerate(table_details["teams"]):
             for player in team["scores"]:
                 names.append(player["playerName"])
                 old_mmrs.append(player["prevMmr"])
-                new_mmrs.append(player["newMmr"])
-                deltas.append(player["delta"])
+                if is_verified:
+                    new_mmrs.append(player["newMmr"])
+                    deltas.append(player["delta"])
+                else:
+                    new_mmrs.append(player["prevMmr"] + calced_deltas[i])
+                    deltas.append(calced_deltas[i])
         len_names = max(map(len, names))
         len_old_mmrs = len(str(max(old_mmrs)))
         len_new_mmrs = len(str(max(new_mmrs)))
@@ -382,7 +405,11 @@ class Stats(commands.Cog):
             mmr_message += f"{names[i].ljust(len_names)}: {str(old_mmrs[i]).ljust(len_old_mmrs)} --> {str(new_mmrs[i]).ljust(len_new_mmrs)} ({str(deltas[i]).rjust(len_deltas)})\n"  # noqa: E501
         mmr_message += "```"
 
-        embed.add_field(name="MMR Changes ", value=mmr_message, inline=True)
+        embed.add_field(
+            name="MMR Changes" if is_verified else "Expected MMR Changes",
+            value=mmr_message,
+            inline=True,
+        )
         embed.set_image(
             url=(os.getenv("WEBSITE_URL") + f"/TableImage/{table_details['id']}.png")
         )
