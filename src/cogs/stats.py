@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import os
 from datetime import datetime
@@ -10,8 +11,9 @@ from dotenv import load_dotenv
 import API.get_mkworld as api
 import common.constants as constants
 import common.data_handler as data_handler
-from common.plotting import create_plot, create_tiers_plot
 from common.calculation import calc_mmr_deltas
+from common.plotting import create_plot, create_tiers_plot
+from common.predict import calc_predicted_deltas
 
 # load environment variables from .env file
 load_dotenv()
@@ -738,6 +740,138 @@ class Stats(commands.Cog):
             icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
         )
         await interaction.response.send_message(embed=embed)
+
+
+    _PLAYERS_PER_TEAM = {"ffa": 1, "2v2": 2, "3v3": 3}
+
+    @app_commands.command(
+        name="predict", description="Estimate MMR changes before a table is submitted"
+    )
+    @app_commands.describe(
+        format="Mogi format",
+        players="Copy-paste the player names from the scoreboard command in the mogi thread, separated by commas",
+        seed="Your seed (team number) in the mogi",
+    )
+    @app_commands.choices(
+        format=[
+            app_commands.Choice(name="FFA", value="ffa"),
+            app_commands.Choice(name="2v2", value="2v2"),
+            app_commands.Choice(name="3v3", value="3v3"),
+        ]
+    )
+    async def predict(
+        self,
+        interaction: discord.Interaction,
+        format: str,
+        players: str,
+        seed: int,
+    ):
+        await interaction.response.defer()
+
+        players_per_team = self._PLAYERS_PER_TEAM[format]
+        player_names = [n.strip() for n in players.split(",") if n.strip()]
+        total_players = len(player_names)
+
+        if total_players not in (12, 24):
+            await interaction.followup.send(
+                f"Expected 12 or 24 players, got {total_players}. "
+                "Please paste all player names from the mogi.",
+                ephemeral=True,
+            )
+            return
+
+        if total_players % players_per_team != 0:
+            await interaction.followup.send(
+                f"{total_players} players is not divisible by {players_per_team} "
+                f"for {format.upper()} format.",
+                ephemeral=True,
+            )
+            return
+
+        num_teams = total_players // players_per_team
+        game_mode = "24p" if total_players == 24 else "12p"
+
+        if not (1 <= seed <= num_teams):
+            await interaction.followup.send(
+                f"Seed must be between 1 and {num_teams} for {format.upper()} "
+                f"with {total_players} players.",
+                ephemeral=True,
+            )
+            return
+
+        season = os.getenv("CURRENT_SEASON")
+        results = []
+        for name in player_names:
+            results.append(await data_handler.fetch_player(name, season, game_mode))
+            await asyncio.sleep(0.1)
+
+        failed = [
+            name
+            for name, result in zip(player_names, results)
+            if result is None or "mmr" not in result
+        ]
+        if failed:
+            failed_list = ", ".join(f"`{n}`" for n in failed)
+            await interaction.followup.send(
+                f"Could not find MMR for: {failed_list}\n"
+                "Please check the names and try again.",
+                ephemeral=True,
+            )
+            return
+
+        mmr_by_name = {
+            name: result["mmr"] for name, result in zip(player_names, results)
+        }
+
+        teams = [
+            {
+                "seed": i + 1,
+                "names": player_names[i * players_per_team : (i + 1) * players_per_team],
+                "mmr": sum(
+                    mmr_by_name[n]
+                    for n in player_names[i * players_per_team : (i + 1) * players_per_team]
+                )
+                / players_per_team,
+            }
+            for i in range(num_teams)
+        ]
+
+        my_team = teams[seed - 1]
+        my_mmr = my_team["mmr"]
+        avg_opp_mmr = sum(t["mmr"] for t in teams if t["seed"] != seed) / (num_teams - 1)
+
+        deltas = calc_predicted_deltas(my_mmr, avg_opp_mmr, num_teams, players_per_team)
+
+        rows = [
+            f"{rank}. {'+' if delta >= 0 else ''}{delta}"
+            for rank, delta in enumerate(deltas, 1)
+        ]
+        half = (len(rows) + 1) // 2
+        code = "```\n"
+        for i in range(half):
+            left = rows[i]
+            right = rows[half + i] if half + i < len(rows) else ""
+            code += f"{left.ljust(12)} {right}\n"
+        code += "```"
+
+        if players_per_team == 1:
+            label = my_team["names"][0]
+            if len(label) > 30:
+                label = label[:27] + "..."
+        else:
+            label = f"Team {seed}"
+
+        embed = discord.Embed(
+            title=f"Estimated MMR Changes for {label}",
+            colour=0x1DA3DD,
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+        embed.add_field(name=label, value=code, inline=False)
+        embed.set_footer(
+            text="Actual results may vary. Use /calc once a table is submitted.",
+            icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+        )
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):
