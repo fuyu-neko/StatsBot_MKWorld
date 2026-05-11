@@ -153,6 +153,15 @@ Show MKWorld Player Average MMR.
 | `season` | No | Season number (default: current season) |
 | `game_mode` | No | `24p` or `12p` (default: `24p`) |
 
+#### `/peakmmr`
+Show MKWorld Player Peak MMR.
+
+| Parameter | Required | Description |
+|---|---|---|
+| `names` | No | Comma-separated list of player names, Discord IDs, or MKC IDs |
+| `season` | No | Season number (default: current season) |
+| `game_mode` | No | `24p` or `12p` (default: `24p`) |
+
 ### Staff Commands
 
 These commands require the role specified by `Mods_Role_ID` in `.env`.
@@ -308,6 +317,15 @@ MMR 推移グラフ付きの詳細なプレイヤー統計情報を表示。
 
 #### `/averagemmr`
 プレイヤーの 平均MMR を表示。
+
+| パラメータ | 必須 | 説明 |
+|---|---|---|
+| `names` | No | プレイヤー名・Discord ID・MKC ID のカンマ区切りリスト |
+| `season` | No | シーズン番号（デフォルト: 現在のシーズン） |
+| `game_mode` | No | `24p` または `12p`（デフォルト: `24p`） |
+
+#### `/peakmmr`
+プレイヤーの 最高MMR を表示。
 
 | パラメータ | 必須 | 説明 |
 |---|---|---|

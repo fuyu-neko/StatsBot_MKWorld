@@ -130,43 +130,12 @@ class Stats(commands.Cog):
         if names is None:
             names = str(interaction.user.id)
         if len(names.split(",")) == 1:
-            # Call API to fetch players MMR data
-            player = await data_handler.fetch_player_info(names, season, game_mode)
-
-            # return error message if player is not found
-            if player is None:
-                await interaction.response.send_message(
-                    f"Player '{names}' not found.",
-                    ephemeral=True,
-                )
-                return
-
-            # return error message if player has no MMR data
-            if "mmr" not in player:
-                await interaction.response.send_message(
-                    "You have to play at least 1 match to check your MMR.",
-                    ephemeral=True,
-                )
-                return
-
-            rank_data = constants.get_rank_data(season)[player["rank"]]
-            embed = discord.Embed(
-                title=f"S{season} MMR - MKWorld{game_mode.upper()}",
-                url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
-                colour=int(f"0x{rank_data['color'][1:]}", 16),
-                timestamp=dt.datetime.now(dt.UTC),
+            await self._show_mmr(
+                interaction, names, season, game_mode, "current"
             )
-
-            embed.add_field(
-                name=player["name"], value=f"```\n{player['mmr']}\n```", inline=False
-            )
-            embed.set_footer(
-                text="MKCentral Lounge",
-                icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
-            )
-            await interaction.response.send_message(embed=embed)
 
         else:
+            await interaction.response.defer()
             embed = discord.Embed(
                 title=f"S{season} MMR - MKWorld{game_mode.upper()}",
                 timestamp=dt.datetime.now(dt.UTC),
@@ -216,7 +185,7 @@ class Stats(commands.Cog):
                 text="MKCentral Lounge",
                 icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
             )
-            await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="stats", description="Show MKWorld Player Stats")
     @app_commands.describe(
@@ -915,6 +884,75 @@ class Stats(commands.Cog):
 
         await interaction.followup.send(embed=embed, file=file)
 
+    async def _show_mmr(
+        self,
+        interaction: discord.Interaction,
+        name: str | None,
+        season: int | None,
+        game_mode: str | None,
+        type: str,
+    ):
+        await interaction.response.defer()
+
+        if name is None:
+            name = str(interaction.user.id)
+        player = await data_handler.fetch_player_info(name, season, game_mode)
+
+        if player is None:
+            await interaction.followup.send(
+                f"Player '{name}' not found.", ephemeral=True
+            )
+            return
+
+        table_events = [
+            e for e in player.get("mmrChanges", []) if e.get("reason") == "Table"
+        ]
+        if not table_events:
+            await interaction.followup.send(
+                "You have to play at least 1 match to check your mmr.",
+                ephemeral=True,
+            )
+            return
+        
+        if type == "current":
+            type_name = "MMR"
+            show_mmr = player.get("mmr")
+            rank_name = player.get("rank")
+        elif type == "average":
+            type_name = "Average MMR"
+            mmr_sum = 0
+            for e in table_events:
+                mmr_sum += e.get("newMmr", 0)
+            avg_mmr = mmr_sum / player.get("eventsPlayed")
+            rank_name = constants.get_rank(avg_mmr, season, game_mode)
+            show_mmr = f"{avg_mmr:.1f}"
+        elif type == "peak":
+            type_name = "Peak MMR"
+            show_mmr = player.get("maxMmr")
+            if show_mmr is None:
+                await interaction.followup.send(
+                    "You have to play at least 5 match to check your Peak mmr."
+                )
+                return
+            rank_name = constants.get_rank(show_mmr, season, game_mode)
+
+        rank_data = constants.get_rank_data(season)[rank_name]
+        embed = discord.Embed(
+                title=f"S{season} {type_name} - MKWorld{game_mode.upper()}",
+                url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
+                colour=int(f"0x{rank_data['color'][1:]}", 16),
+                timestamp=dt.datetime.now(dt.UTC),
+            )
+
+        embed.add_field(
+                name=player["name"], value=f"```\n{show_mmr}\n```", inline=False
+            )
+        embed.set_footer(
+                text="MKCentral Lounge",
+                icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+            )
+        await interaction.followup.send(embed=embed)
+
     @app_commands.command(
         name="averagemmr", description="Show MKWorld Player Average MMR"
     )
@@ -936,51 +974,34 @@ class Stats(commands.Cog):
         season: int | None = int(os.getenv("CURRENT_SEASON")),
         game_mode: str | None = "24p",
     ):
-        await interaction.response.defer()
+        await self._show_mmr(
+            interaction, name, season, game_mode, "average"
+        )
 
-        if name is None:
-            name = str(interaction.user.id)
-        player = await data_handler.fetch_player_info(name, season, game_mode)
-
-        if player is None:
-            await interaction.followup.send(
-                f"Player '{name}' not found.", ephemeral=True
-            )
-            return
-
-        table_events = [
-            e for e in player.get("mmrChanges", []) if e.get("reason") == "Table"
+    @app_commands.command(
+        name="peakmmr", description="Show MKWorld Player Peak MMR"
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        game_mode="Game mode (default: 24p)",
+    )
+    @app_commands.choices(
+        game_mode=[
+            app_commands.Choice(name="24p", value="24p"),
+            app_commands.Choice(name="12p", value="12p"),
         ]
-        if not table_events:
-            await interaction.followup.send(
-                "You have to play at least 1 match to check your tier stats.",
-                ephemeral=True,
-            )
-            return
-        
-        mmr_sum = 0
-        for e in table_events:
-            mmr_sum += e.get("newMmr", 0)
-        
-        avg_mmr = mmr_sum / player.get("eventsPlayed")
-            
-        rank_name = constants.get_rank(avg_mmr, season, game_mode)
-        rank_data = constants.get_rank_data(season)[rank_name]
-        embed = discord.Embed(
-                title=f"S{season} Average MMR - MKWorld{game_mode.upper()}",
-                url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
-                colour=int(f"0x{rank_data['color'][1:]}", 16),
-                timestamp=dt.datetime.now(dt.UTC),
-            )
-
-        embed.add_field(
-                name=player["name"], value=f"```\n{avg_mmr:.1f}\n```", inline=False
-            )
-        embed.set_footer(
-                text="MKCentral Lounge",
-                icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
-            )
-        await interaction.followup.send(embed=embed)
+    )
+    async def peakmmr(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = "24p",
+    ):
+        await self._show_mmr(
+            interaction, name, season, game_mode, "peak"
+        )
 
     @app_commands.command(
         name="h2h",
