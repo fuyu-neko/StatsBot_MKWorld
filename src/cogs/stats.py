@@ -916,6 +916,73 @@ class Stats(commands.Cog):
         await interaction.followup.send(embed=embed, file=file)
 
     @app_commands.command(
+        name="averagemmr", description="Show MKWorld Player Average MMR"
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        game_mode="Game mode (default: 24p)",
+    )
+    @app_commands.choices(
+        game_mode=[
+            app_commands.Choice(name="24p", value="24p"),
+            app_commands.Choice(name="12p", value="12p"),
+        ]
+    )
+    async def averagemmr(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = "24p",
+    ):
+        await interaction.response.defer()
+
+        if name is None:
+            name = str(interaction.user.id)
+        player = await data_handler.fetch_player_info(name, season, game_mode)
+
+        if player is None:
+            await interaction.followup.send(
+                f"Player '{name}' not found.", ephemeral=True
+            )
+            return
+
+        table_events = [
+            e for e in player.get("mmrChanges", []) if e.get("reason") == "Table"
+        ]
+        if not table_events:
+            await interaction.followup.send(
+                "You have to play at least 1 match to check your tier stats.",
+                ephemeral=True,
+            )
+            return
+        
+        mmr_sum = 0
+        for e in table_events:
+            mmr_sum += e.get("newMmr", 0)
+        
+        avg_mmr = mmr_sum / player.get("eventsPlayed")
+            
+        rank_name = constants.get_rank(avg_mmr, season, game_mode)
+        rank_data = constants.get_rank_data(season)[rank_name]
+        embed = discord.Embed(
+                title=f"S{season} Average MMR - MKWorld{game_mode.upper()}",
+                url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
+                colour=int(f"0x{rank_data['color'][1:]}", 16),
+                timestamp=dt.datetime.now(dt.UTC),
+            )
+
+        embed.add_field(
+                name=player["name"], value=f"```\n{avg_mmr:.1f}\n```", inline=False
+            )
+        embed.set_footer(
+                text="MKCentral Lounge",
+                icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+            )
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(
         name="h2h",
         description="Compare two players' shared matches (head-to-head)",
     )
