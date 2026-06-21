@@ -78,7 +78,7 @@ def get_rank(mmr: int, season: int, game_mode: str):
             else:
                 return "Grandmaster"
 
-        if season >= 2:
+        if season == 2:
             if mmr < 2000:
                 return "Iron"
             elif mmr < 4000:
@@ -96,6 +96,28 @@ def get_rank(mmr: int, season: int, game_mode: str):
             elif mmr < 13500:
                 return "Diamond"
             elif mmr < 14500:
+                return "Master"
+            else:
+                return "Grandmaster"
+
+        if season >= 3:
+            if mmr < 2000:
+                return "Iron"
+            elif mmr < 4000:
+                return "Bronze"
+            elif mmr < 6000:
+                return "Silver"
+            elif mmr < 8000:
+                return "Gold"
+            elif mmr < 9500:
+                return "Platinum"
+            elif mmr < 11000:
+                return "Sapphire"
+            elif mmr < 12500:
+                return "Ruby"
+            elif mmr < 14000:
+                return "Diamond"
+            elif mmr < 15000:
                 return "Master"
             else:
                 return "Grandmaster"
@@ -178,7 +200,7 @@ def get_mmr_definition(season: int, game_mode: str) -> list[int]:
                 12500,
                 13500,
             ]
-        elif season >= 2:
+        elif season == 2:
             mmr_definition = [
                 0,
                 2000,
@@ -190,6 +212,20 @@ def get_mmr_definition(season: int, game_mode: str) -> list[int]:
                 12000,
                 13500,
                 14500,
+            ]
+
+        elif season >= 3:
+            mmr_definition = [
+                0,
+                2000,
+                4000,
+                6000,
+                8000,
+                9500,
+                11000,
+                12500,
+                14000,
+                15000,
             ]
 
     elif game_mode == "24p":
