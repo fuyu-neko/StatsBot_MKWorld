@@ -13,34 +13,37 @@ from matplotlib.offsetbox import AnchoredOffsetbox, HPacker, TextArea
 from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-from common.constants import get_mmr_definition, get_rank, rank_index
+from common import game_config as cfg
+from common.constants import (
+    get_mmr_colors,
+    get_mmr_definition,
+    get_rank,
+    get_subrank_lines,
+    rank_index,
+)
+
+
+def _mode_suffix(game_mode: str) -> str:
+    """' (24 player)' for a multi-mode game, '' when there is only one mode."""
+    display = cfg.mode_display(game_mode)
+    return f" ({display})" if display else ""
+
+
+def _mode_caption(game_mode: str) -> str:
+    """' · 24 player' for a multi-mode game, '' when there is only one mode."""
+    display = cfg.mode_display(game_mode)
+    return f" · {display}" if display else ""
 
 
 def create_plot(mmrhistory: list, season: int, player_name: str, game_mode: str):
     b = BytesIO()
 
-    # Convert game_mode for display
-    if season == 0 or season == 1:
-        game_mode_display = None
-    elif game_mode == "12p":
-        game_mode_display = "12 player"
-    elif game_mode == "24p":
-        game_mode_display = "24 player"
+    # Seasons 0-1 ran a single ladder, so the mode is not worth showing.
+    mode_suffix = "" if season <= 1 else _mode_suffix(game_mode)
 
     ranks = get_mmr_definition(season, game_mode)
-
-    colors = [
-        "#817876",
-        "#E67E22",
-        "#7D8396",
-        "#F1C40F",
-        "#3FABB8",
-        "#286CD3",
-        "#d51c5e",
-        "#9CCBD6",
-        "#0E0B0B",
-        "#A3022C",
-    ]
+    colors = get_mmr_colors(season, game_mode)
+    subrank_lines = get_subrank_lines(season, game_mode)
 
     matplotlib.rcParams.update(
         matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
@@ -70,7 +73,7 @@ def create_plot(mmrhistory: list, season: int, player_name: str, game_mode: str)
     ax_header.text(
         0.08,
         0.5,
-        "MKCentral MKWorld Lounge",
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
         transform=ax_header.transAxes,
         fontsize=13,
         fontweight="bold",
@@ -83,10 +86,7 @@ def create_plot(mmrhistory: list, season: int, player_name: str, game_mode: str)
     ax_title = fig.add_subplot(gs[1])
     ax_title.set_axis_off()
     title_text = f"Season{season} : {player_name}"
-    if game_mode_display:
-        title_text = f"Season{season} ({game_mode_display}) : {player_name}"
-    else:
-        title_text = f"Season{season} : {player_name}"
+    title_text = f"Season{season}{mode_suffix} : {player_name}"
     ax_title.text(
         0.5,
         0.5,
@@ -148,6 +148,12 @@ def create_plot(mmrhistory: list, season: int, player_name: str, game_mode: str)
             ax.fill_between(xs, minfill, maxfill, color="#0E0B0B")
         else:
             ax.fill_between(xs, minfill, maxfill, color=colors[i])
+
+    # Sub-ranks (e.g. Iron 1 / Iron 2) share a band, split by a divider line.
+    visible_lines = [line for line in subrank_lines if ymin <= line <= ymax]
+    if visible_lines:
+        ax.hlines(visible_lines, xmin, xmax, colors="snow", linewidth=1)
+
     ax.fill_between(xs, ymin, mmrhistory, facecolor="#212121", alpha=0.4)
 
     # --- Rank milestone & Peak MMR annotations ---
@@ -233,12 +239,7 @@ def create_scores_plot(
         matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
     )
 
-    if game_mode == "12p":
-        game_mode_display = "12 player"
-    elif game_mode == "24p":
-        game_mode_display = "24 player"
-    else:
-        game_mode_display = game_mode
+    mode_suffix = _mode_suffix(game_mode)
 
     fig = Figure(figsize=(10, 6.5))
     gs = gridspec.GridSpec(
@@ -264,7 +265,7 @@ def create_scores_plot(
     ax_header.text(
         0.08,
         0.5,
-        "MKCentral MKWorld Lounge",
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
         transform=ax_header.transAxes,
         fontsize=13,
         fontweight="bold",
@@ -279,7 +280,7 @@ def create_scores_plot(
     flag = f" [{country_code}]" if country_code else ""
     tier_part = f" | Tier: {tier}" if tier else ""
     title_text = (
-        f"Season {season} ({game_mode_display}) Scores{tier_part} | {label}"
+        f"Season {season}{mode_suffix} Scores{tier_part} | {label}"
         f" : {player_name}{flag}"
     )
     ax_title.text(
@@ -421,12 +422,7 @@ def create_tiers_plot(
         matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
     )
 
-    if game_mode == "12p":
-        game_mode_display = "12 player"
-    elif game_mode == "24p":
-        game_mode_display = "24 player"
-    else:
-        game_mode_display = game_mode
+    mode_suffix = _mode_suffix(game_mode)
 
     headers = [
         "Tier",
@@ -494,7 +490,7 @@ def create_tiers_plot(
     ax_header.text(
         0.08,
         0.5,
-        "MKCentral MKWorld Lounge",
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
         transform=ax_header.transAxes,
         fontsize=13,
         fontweight="bold",
@@ -507,7 +503,7 @@ def create_tiers_plot(
     ax_title = fig.add_subplot(gs[1])
     ax_title.set_axis_off()
     flag = f" [{country_code}]" if country_code else ""
-    title_text = f"Season {season} ({game_mode_display}) Tier Data: {player_name}{flag}"
+    title_text = f"Season {season}{mode_suffix} Tier Data: {player_name}{flag}"
     ax_title.text(
         0.5,
         0.5,
@@ -574,24 +570,13 @@ def create_formats_plot(
     country_code: str,
     game_mode: str,
 ):
-    """Render a per-format breakdown as a styled image table.
-
-    format_rows: list of dicts with keys
-        format, n, win_rate, avg_delta, total, avg_rank, avg_score,
-        firsts, tops, bottoms
-    """
     b = BytesIO()
 
     matplotlib.rcParams.update(
         matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
     )
 
-    if game_mode == "12p":
-        game_mode_display = "12 player"
-    elif game_mode == "24p":
-        game_mode_display = "24 player"
-    else:
-        game_mode_display = game_mode
+    mode_suffix = _mode_suffix(game_mode)
 
     headers = [
         "Format",
@@ -656,7 +641,7 @@ def create_formats_plot(
     ax_header.text(
         0.08,
         0.5,
-        "MKCentral MKWorld Lounge",
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
         transform=ax_header.transAxes,
         fontsize=13,
         fontweight="bold",
@@ -668,9 +653,7 @@ def create_formats_plot(
     ax_title = fig.add_subplot(gs[1])
     ax_title.set_axis_off()
     flag = f" [{country_code}]" if country_code else ""
-    title_text = (
-        f"Season {season} ({game_mode_display}) Format Data: {player_name}{flag}"
-    )
+    title_text = f"Season {season}{mode_suffix} Format Data: {player_name}{flag}"
     ax_title.text(
         0.5,
         0.5,
@@ -739,27 +722,13 @@ def create_streak_plot(
     target_cells: int = 10,
     mmr: int | None = None,
 ):
-    """Render last-N matches as a colored W/L/T strip.
-
-    events: chronological list (oldest -> newest) of mmrChanges entries.
-        Each must include 'mmrDelta'.
-    current_streak_count: number of trailing cells to outline as the active
-        streak. 0 disables the highlight.
-    target_cells: nominal slot count for the strip. When fewer events are
-        provided, the x-axis is padded so cell pixel size stays constant.
-    """
     b = BytesIO()
 
     matplotlib.rcParams.update(
         matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
     )
 
-    if game_mode == "12p":
-        game_mode_display = "12 player"
-    elif game_mode == "24p":
-        game_mode_display = "24 player"
-    else:
-        game_mode_display = game_mode
+    mode_suffix = _mode_suffix(game_mode)
 
     n = len(events)
     if n == 0:
@@ -790,7 +759,7 @@ def create_streak_plot(
     ax_header.text(
         0.08,
         0.5,
-        "MKCentral MKWorld Lounge",
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
         transform=ax_header.transAxes,
         fontsize=13,
         fontweight="bold",
@@ -805,8 +774,7 @@ def create_streak_plot(
     flag = f" [{country_code}]" if country_code else ""
     mmr_suffix = f" · {mmr} MMR" if mmr is not None else ""
     title_text = (
-        f"Season {season} ({game_mode_display}) Recent Form: "
-        f"{player_name}{mmr_suffix}{flag}"
+        f"Season {season}{mode_suffix} Recent Form: {player_name}{mmr_suffix}{flag}"
     )
     ax_title.text(
         0.5,
@@ -903,32 +871,13 @@ def create_partner_plot(
     season: int,
     game_mode: str,
 ):
-    """Render a partnership comparison as a styled image.
-
-    stats keys:
-        p1_name, p2_name, p1_country, p2_country,
-        p1_mmr, p2_mmr,
-        shared, wins, losses, total_delta,
-        p1_avg_score, p2_avg_score,
-        p1_best_score, p2_best_score,
-        avg_rank, win_rate,
-        p1_best_match, p2_best_match  (each: dict with date, tier, table_id,
-            self_score, other_score, rank, num_teams, delta, or None),
-        recent (list of dicts: date, tier, p1_score, p2_score, rank,
-                num_teams, delta)
-    """
     b = BytesIO()
 
     matplotlib.rcParams.update(
         matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
     )
 
-    if game_mode == "12p":
-        game_mode_display = "12 player"
-    elif game_mode == "24p":
-        game_mode_display = "24 player"
-    else:
-        game_mode_display = game_mode
+    mode_suffix = _mode_suffix(game_mode)
 
     p1, p2 = stats["p1_name"], stats["p2_name"]
     recent = stats["recent"]
@@ -976,7 +925,7 @@ def create_partner_plot(
     ax_header.text(
         0.08,
         0.5,
-        "MKCentral MKWorld Lounge",
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
         transform=ax_header.transAxes,
         fontsize=13,
         fontweight="bold",
@@ -988,7 +937,7 @@ def create_partner_plot(
     # --- Title ---
     ax_title = fig.add_subplot(gs[1])
     ax_title.set_axis_off()
-    title_text = f"Season {season} ({game_mode_display}) Partner Stats"
+    title_text = f"Season {season}{mode_suffix} Partner Stats"
     ax_title.text(
         0.5,
         0.5,
@@ -1087,11 +1036,6 @@ def create_partner_plot(
     ax_center.set_axis_off()
     win_color = "#7CFF9E"
     loss_color = "#FF7C8A"
-    # Record: render the W-L numbers as three pieces so wins/losses can be
-    # colored independently, then add small color-matched labels under each
-    # so the green/red coding reads unambiguously.
-    # Use HPacker so the dash always has equal pixel-spacing to each digit,
-    # regardless of glyph shape (rounded "0" vs straight "1" etc.).
     num_box = HPacker(
         children=[
             TextArea(
@@ -1147,7 +1091,7 @@ def create_partner_plot(
         )
     )
     sub_caption = (
-        f"S{season} · {game_mode_display} · "
+        f"S{season}{_mode_caption(game_mode)} · "
         f"{stats['shared']} match"
         + ("es" if stats["shared"] != 1 else "")
         + " together"
@@ -1384,35 +1328,13 @@ def create_h2h_plot(
     season: int,
     game_mode: str,
 ):
-    """Render a head-to-head comparison as a styled image.
-
-    stats keys:
-        p1_name, p2_name, p1_country, p2_country,
-        p1_mmr, p2_mmr,
-        shared, teammate_count, opponent_count,
-        teammate_wins, teammate_losses,
-        p1_beats_p2, p2_beats_p1, ties,
-        p1_avg_score, p2_avg_score,
-        p1_avg_rank, p2_avg_rank,
-        p1_outscored, p2_outscored,
-        p1_mmr_delta, p2_mmr_delta,
-        p1_biggest_win, p2_biggest_win  (each: dict with date, tier,
-            game_mode, my_score, other_score, or None),
-        recent (list of dicts: date, tier, side, p1_score, p1_delta,
-                p2_score, p2_delta, p1_rank, p2_rank)
-    """
     b = BytesIO()
 
     matplotlib.rcParams.update(
         matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
     )
 
-    if game_mode == "12p":
-        game_mode_display = "12 player"
-    elif game_mode == "24p":
-        game_mode_display = "24 player"
-    else:
-        game_mode_display = game_mode
+    mode_suffix = _mode_suffix(game_mode)
 
     p1, p2 = stats["p1_name"], stats["p2_name"]
     recent = stats["recent"]
@@ -1460,7 +1382,7 @@ def create_h2h_plot(
     ax_header.text(
         0.08,
         0.5,
-        "MKCentral MKWorld Lounge",
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
         transform=ax_header.transAxes,
         fontsize=13,
         fontweight="bold",
@@ -1472,7 +1394,7 @@ def create_h2h_plot(
     # --- Title ---
     ax_title = fig.add_subplot(gs[1])
     ax_title.set_axis_off()
-    title_text = f"Season {season} ({game_mode_display}) Head-to-Head"
+    title_text = f"Season {season}{mode_suffix} Head-to-Head"
     ax_title.text(
         0.5,
         0.5,
@@ -1618,7 +1540,7 @@ def create_h2h_plot(
         fontsize=11,
     )
     sub_caption = (
-        f"S{season} · {game_mode_display} · "
+        f"S{season}{_mode_caption(game_mode)} · "
         f"{stats['shared']} opponent match" + ("es" if stats["shared"] != 1 else "")
     )
     ax_center.text(

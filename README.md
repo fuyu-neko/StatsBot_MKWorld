@@ -83,10 +83,11 @@ Mods_Role_ID=your_mod_role_id
 
 | Variable | Description |
 |---|---|
+| `GAME` | Which lounge this process serves: `mkworld` or `mk8dx` (default: `mkworld`) |
 | `ENVIRONMENT` | Selects which token to use: `staging` or `production` |
 | `DISCORD_BOT_TOKEN_STAGING` | Discord bot token used when `ENVIRONMENT=staging` |
 | `DISCORD_BOT_TOKEN_PRODUCTION` | Discord bot token used when `ENVIRONMENT=production` |
-| `CURRENT_SEASON` | Current MKWorld Lounge season number |
+| `CURRENT_SEASON` | Current season number of the selected lounge (MK8DX is supported from season 4) |
 | `WEBSITE_URL` | MKCentral Lounge API base URL |
 | `MKCentral_Site_URL` | MKCentral website URL |
 | `DEBUG_MODE` | Enable debug logging (`True`/`False`) |
@@ -194,10 +195,11 @@ Mods_Role_ID=your_mod_role_id
 
 | 変数名 | 説明 |
 |---|---|
+| `GAME` | このプロセスが担当するラウンジ: `mkworld` または `mk8dx`（デフォルト: `mkworld`） |
 | `ENVIRONMENT` | 使用するトークンを選択（`staging` または `production`） |
 | `DISCORD_BOT_TOKEN_STAGING` | `ENVIRONMENT=staging` のときに使用される Discord Bot トークン |
 | `DISCORD_BOT_TOKEN_PRODUCTION` | `ENVIRONMENT=production` のときに使用される Discord Bot トークン |
-| `CURRENT_SEASON` | 現在の MKWorld Lounge シーズン番号 |
+| `CURRENT_SEASON` | 選択したラウンジの現在のシーズン番号（MK8DX はシーズン 4 以降に対応） |
 | `WEBSITE_URL` | MKCentral Lounge API のベース URL |
 | `MKCentral_Site_URL` | MKCentral ウェブサイトの URL |
 | `DEBUG_MODE` | デバッグログの有効化（`True`/`False`） |
