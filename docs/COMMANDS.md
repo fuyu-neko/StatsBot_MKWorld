@@ -145,6 +145,24 @@ Show events played and net MMR per month for the season.
 | `game_mode` | No | `24p` or `12p` (default: `24p`). MKWorld only — not shown when `GAME=mk8dx` |
 | `timezone` | No | Timezone abbreviation, e.g. `EST`, `JST` (default: `UTC`) |
 
+#### `/averagemmr`
+Show a player's average MMR.
+
+| Parameter | Required | Description |
+|---|---|---|
+| `name` | No | Lounge name, Discord ID, or MKC ID |
+| `season` | No | Season number (default: current season) |
+| `game_mode` | No | `24p` or `12p` (default: `24p`). MKWorld only — not shown when `GAME=mk8dx` |
+
+#### `/peakmmr`
+Show a player's peak MMR.
+
+| Parameter | Required | Description |
+|---|---|---|
+| `name` | No | Lounge name, Discord ID, or MKC ID |
+| `season` | No | Season number (default: current season) |
+| `game_mode` | No | `24p` or `12p` (default: `24p`). MKWorld only — not shown when `GAME=mk8dx` |
+
 ### Staff Commands
 
 These commands require the role specified by `Mods_Role_ID` in `.env`.
@@ -298,6 +316,24 @@ MMR 推移グラフ付きの詳細なプレイヤー統計情報を表示。
 | `season` | No | シーズン番号（デフォルト: 現在のシーズン） |
 | `game_mode` | No | `24p` または `12p`（デフォルト: `24p`）。MKWorld 専用で、`GAME=mk8dx` では表示されません |
 | `timezone` | No | タイムゾーン略称（例: `EST`, `JST`、デフォルト: `UTC`） |
+
+#### `/averagemmr`
+プレイヤーの 平均MMR を表示。
+
+| パラメータ | 必須 | 説明 |
+|---|---|---|
+| `name` | No | ラウンジ名・Discord ID・MKC ID |
+| `season` | No | シーズン番号（デフォルト: 現在のシーズン） |
+| `game_mode` | No | `24p` または `12p`（デフォルト: `24p`）。MKWorld 専用で、`GAME=mk8dx` では表示されません |
+
+#### `/peakmmr`
+プレイヤーの 最高MMR を表示。
+
+| パラメータ | 必須 | 説明 |
+|---|---|---|
+| `name` | No | ラウンジ名・Discord ID・MKC ID |
+| `season` | No | シーズン番号（デフォルト: 現在のシーズン） |
+| `game_mode` | No | `24p` または `12p`（デフォルト: `24p`）。MKWorld 専用で、`GAME=mk8dx` では表示されません |
 
 ### スタッフコマンド
 
