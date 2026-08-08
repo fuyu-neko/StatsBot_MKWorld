@@ -28,7 +28,7 @@ Thumbs.db
 # env
 .env
 
-# tests
+# tests (legacy MK8DX bot sources kept for reference only)
 tests/
 
 docs/summaries/
