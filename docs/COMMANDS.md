@@ -29,6 +29,7 @@ Show detailed player statistics with an MMR history chart.
 | `name` | No | Lounge name, Discord ID, or MKC ID |
 | `season` | No | Season number (default: current season) |
 | `game_mode` | No | `24p` or `12p` (default: `24p`). MKWorld only — not shown when `GAME=mk8dx` |
+| `last` | No | Only show stats for the last N matches (default: the whole season) |
 
 #### `/lastmatch`
 Show a player's most recent verified match.
@@ -201,6 +202,7 @@ MMR 推移グラフ付きの詳細なプレイヤー統計情報を表示。
 | `name` | No | ラウンジ名・Discord ID・MKC ID |
 | `season` | No | シーズン番号（デフォルト: 現在のシーズン） |
 | `game_mode` | No | `24p` または `12p`（デフォルト: `24p`）。MKWorld 専用で、`GAME=mk8dx` では表示されません |
+| `last` | No | 直近 N 試合のみで統計を集計（デフォルト: シーズン全体） |
 
 #### `/lastmatch`
 プレイヤーの直近のアップデート済み試合を表示。
