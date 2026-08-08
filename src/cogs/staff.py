@@ -7,6 +7,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 import common.data_handler as data_handler
+from common import game_config as cfg
 from common.checks import is_mod
 
 load_dotenv()
@@ -23,7 +24,7 @@ class Staff(commands.Cog):
         if name is None:
             name = str(interaction.user.id)
         player = await data_handler.fetch_player(
-            name, season=os.getenv("CURRENT_SEASON"), game_mode="24p"
+            name, season=os.getenv("CURRENT_SEASON"), game_mode=cfg.DEFAULT_GAME_MODE
         )
 
         if player is None:
@@ -40,7 +41,7 @@ class Staff(commands.Cog):
 
         embed = discord.Embed(
             title="Player Data",
-            url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['id']}",
+            url=cfg.player_url(player["id"]),
             description=player["name"],
             timestamp=dt.datetime.now(dt.UTC),
         )

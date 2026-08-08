@@ -7,6 +7,8 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from common import game_config as cfg
+
 load_dotenv()
 
 if os.getenv("DEBUG_MODE", "False").lower() == "true":
@@ -102,7 +104,7 @@ def get_bot_token() -> str:
     token = os.getenv(token_key)
     if not token:
         raise RuntimeError(f"{token_key} is not set in environment")
-    logging.info(f"Starting bot in {env.upper()} mode")
+    logging.info(f"Starting {cfg.DISPLAY_NAME} bot in {env.upper()} mode")
     return token
 
 
