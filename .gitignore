@@ -25,11 +25,11 @@ build/
 .DS_Store
 Thumbs.db
 
-# docs
-docs/
-
 # env
 .env
 
-# tests
+# tests (legacy MK8DX bot sources kept for reference only)
 tests/
+
+docs/summaries/
+docs/deployment.md

@@ -1,23 +1,126 @@
 import datetime as dt
 import os
+import statistics
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
-import API.get_mkworld as api
+import API.get_lounge as api
 import common.constants as constants
 import common.data_handler as data_handler
+from common import game_config as cfg
 from common.calculation import calc_mmr_deltas
+from common.command_options import game_mode_option, reject_unsupported_season
 from common.plotting import (
+    create_formats_plot,
     create_h2h_plot,
+    create_partner_plot,
     create_plot,
+    create_scores_plot,
     create_streak_plot,
     create_tiers_plot,
 )
 from common.predict import parse_room, predict_deltas
+
+# Common timezone abbreviations routed to IANA zones so DST is automatic.
+# Ambiguous picks: CST -> US Central, IST -> India.
+ABBREV_TO_IANA = {
+    "UTC": "UTC",
+    "GMT": "Etc/GMT",
+    "EST": "America/New_York",
+    "EDT": "America/New_York",
+    "CST": "America/Chicago",
+    "CDT": "America/Chicago",
+    "MST": "America/Denver",
+    "MDT": "America/Denver",
+    "PST": "America/Los_Angeles",
+    "PDT": "America/Los_Angeles",
+    "AST": "America/Halifax",
+    "ADT": "America/Halifax",
+    "NST": "America/St_Johns",
+    "NDT": "America/St_Johns",
+    "AKST": "America/Anchorage",
+    "AKDT": "America/Anchorage",
+    "HST": "Pacific/Honolulu",
+    "HDT": "Pacific/Honolulu",
+    "CLT": "America/Santiago",
+    "CLST": "America/Santiago",
+    "BST": "Europe/London",
+    "CET": "Europe/Paris",
+    "CEST": "Europe/Paris",
+    "IST": "Asia/Kolkata",
+    "JST": "Asia/Tokyo",
+    "KST": "Asia/Seoul",
+    "AEST": "Australia/Sydney",
+    "AEDT": "Australia/Sydney",
+    "ACST": "Australia/Adelaide",
+    "ACDT": "Australia/Adelaide",
+    "AWST": "Australia/Perth",
+    "AWDT": "Australia/Perth",
+}
+
+
+def _resolve_timezone(tz_str: str | None) -> tuple[str, ZoneInfo] | None:
+    if not tz_str:
+        return "UTC", ZoneInfo("UTC")
+    upper = tz_str.upper()
+    iana = ABBREV_TO_IANA.get(upper)
+    if iana is None:
+        return None
+    try:
+        return upper, ZoneInfo(iana)
+    except ZoneInfoNotFoundError:
+        return None
+
+
+TIER_ORDER = [
+    "SQ",
+    "X",
+    "S",
+    "AB",
+    "A",
+    "B",
+    "BC",
+    "C",
+    "CD",
+    "D",
+    "DE",
+    "E",
+    "EF",
+    "F",
+]
+
+_FORMAT_TO_TEAM_SIZE = {
+    "FFA": 1,
+    "2v2": 2,
+    "3v3": 3,
+    "4v4": 4,
+    "6v6": 6,
+    "8v8": 8,
+    "12v12": 12,
+}
+
+_TEAM_SIZE_TO_FORMAT = {size: name for name, size in _FORMAT_TO_TEAM_SIZE.items()}
+
+# 8v8 and 12v12 need 24 players, so they never occur in a 12p-only lounge.
+_MAX_PLAYERS = 24 if "24p" in cfg.GAME_MODES else 12
+FORMAT_ORDER = [
+    name
+    for name, size in _FORMAT_TO_TEAM_SIZE.items()
+    if _MAX_PLAYERS % size == 0 and _MAX_PLAYERS // size >= 2
+]
+
+
+def _derive_format(num_teams: int, game_mode: str) -> str:
+    total = 24 if game_mode == "24p" else 12
+    if not num_teams or total % num_teams != 0:
+        return "?"
+    return _TEAM_SIZE_TO_FORMAT.get(total // num_teams, "?")
+
 
 # load environment variables from .env file
 load_dotenv()
@@ -27,25 +130,21 @@ class Stats(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="mmr", description="Show MKWorld Player MMR")
+    @app_commands.command(name="mmr", description=f"Show {cfg.DISPLAY_NAME} Player MMR")
     @app_commands.describe(
         names="comma-separated list of player names, discord ids, mkc ids (optional)",
         season="Season number (default: current season)",
-        game_mode="Game mode (default: 24p)",
     )
-    @app_commands.choices(
-        game_mode=[
-            app_commands.Choice(name="24p", value="24p"),
-            app_commands.Choice(name="12p", value="12p"),
-        ]
-    )
+    @game_mode_option
     async def mmr(
         self,
         interaction: discord.Interaction,
         names: str | None = None,
         season: int | None = int(os.getenv("CURRENT_SEASON")),
-        game_mode: str | None = "24p",
+        game_mode: str | None = cfg.DEFAULT_GAME_MODE,
     ):
+        if await reject_unsupported_season(interaction, season):
+            return
         # if multiple names are provided,
         # split them into a list and fetch MMR data for each player
 
@@ -72,10 +171,10 @@ class Stats(commands.Cog):
                 )
                 return
 
-            rank_data = constants.get_rank_data(season)[player["rank"]]
+            rank_data = constants.get_rank_info(player["rank"])
             embed = discord.Embed(
-                title=f"S{season} MMR - MKWorld{game_mode.upper()}",
-                url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
+                title=f"S{season} MMR - {cfg.label(game_mode)}",
+                url=cfg.player_url(player["playerId"], game_mode),
                 colour=int(f"0x{rank_data['color'][1:]}", 16),
                 timestamp=dt.datetime.now(dt.UTC),
             )
@@ -91,7 +190,7 @@ class Stats(commands.Cog):
 
         else:
             embed = discord.Embed(
-                title=f"S{season} MMR - MKWorld{game_mode.upper()}",
+                title=f"S{season} MMR - {cfg.label(game_mode)}",
                 timestamp=dt.datetime.now(dt.UTC),
             )
 
@@ -141,25 +240,23 @@ class Stats(commands.Cog):
             )
             await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="stats", description="Show MKWorld Player Stats")
+    @app_commands.command(
+        name="stats", description=f"Show {cfg.DISPLAY_NAME} Player Stats"
+    )
     @app_commands.describe(
         name="Lounge name, discord ids, mkc ids (optional)",
         season="Season number (default: current season)",
-        game_mode="Game mode (default: 24p)",
     )
-    @app_commands.choices(
-        game_mode=[
-            app_commands.Choice(name="24p", value="24p"),
-            app_commands.Choice(name="12p", value="12p"),
-        ]
-    )
+    @game_mode_option
     async def stats(
         self,
         interaction: discord.Interaction,
         name: str | None = None,
         season: int | None = int(os.getenv("CURRENT_SEASON")),
-        game_mode: str | None = "24p",
+        game_mode: str | None = cfg.DEFAULT_GAME_MODE,
     ):
+        if await reject_unsupported_season(interaction, season):
+            return
         await interaction.response.defer()
 
         if name is None:
@@ -182,7 +279,7 @@ class Stats(commands.Cog):
             )
             return
 
-        rank_data = constants.get_rank_data(season)[player["rank"]]
+        rank_data = constants.get_rank_info(player["rank"])
 
         # Generate MMR history plot
         mmr_changes = list(reversed(player["mmrChanges"]))
@@ -197,8 +294,8 @@ class Stats(commands.Cog):
 
         # create embed with player stats
         embed = discord.Embed(
-            title=f"S{season} Stats - MKWorld{game_mode.upper()}",
-            url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
+            title=f"S{season} Stats - {cfg.label(game_mode)}",
+            url=cfg.player_url(player["playerId"], game_mode),
             description=f"### {player['name']} [{player['countryCode']}]",
             colour=int(f"0x{rank_data['color'][1:]}", 16),
             timestamp=dt.datetime.now(dt.UTC),
@@ -272,17 +369,14 @@ class Stats(commands.Cog):
         await interaction.followup.send(embed=embed, file=file)
 
     @app_commands.command(
-        name="lastmatch", description="Show MKWorld Player Last Verified Match"
+        name="lastmatch",
+        description=f"Show {cfg.DISPLAY_NAME} Player Last Verified Match",
     )
     @app_commands.describe(
         name="Lounge name, discord id, mkc id (optional)",
-        game_mode="Game mode (default: most recent across both 12p and 24p)",
     )
-    @app_commands.choices(
-        game_mode=[
-            app_commands.Choice(name="24p", value="24p"),
-            app_commands.Choice(name="12p", value="12p"),
-        ]
+    @game_mode_option(
+        description="Game mode (default: most recent across both 12p and 24p)"
     )
     async def lastmatch(
         self,
@@ -294,7 +388,7 @@ class Stats(commands.Cog):
             name = str(interaction.user.id)
 
         season = os.getenv("CURRENT_SEASON")
-        modes = [game_mode] if game_mode is not None else ["24p", "12p"]
+        modes = [game_mode] if game_mode is not None else list(cfg.GAME_MODES)
 
         candidates = []
         player_name_for_error = name
@@ -378,7 +472,9 @@ class Stats(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="table", description="Show MKWorld Match Details")
+    @app_commands.command(
+        name="table", description=f"Show {cfg.DISPLAY_NAME} Match Details"
+    )
     @app_commands.describe(table_id="Table ID")
     async def table(self, interaction: discord.Interaction, table_id: str):
         table_details = await api.fetch_table(table_id=table_id)
@@ -460,7 +556,7 @@ class Stats(commands.Cog):
         if name is None:
             name = str(interaction.user.id)
         player = await data_handler.fetch_player_info(
-            name, season=os.getenv("CURRENT_SEASON"), game_mode="24p"
+            name, season=os.getenv("CURRENT_SEASON"), game_mode=cfg.DEFAULT_GAME_MODE
         )
 
         if player is None:
@@ -471,7 +567,7 @@ class Stats(commands.Cog):
 
         embed = discord.Embed(
             title=f"Namelog for {player['name']}",
-            url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}",
+            url=cfg.player_url(player["playerId"]),
             timestamp=dt.datetime.now(dt.UTC),
         )
 
@@ -491,13 +587,15 @@ class Stats(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="fc", description="Show MKWorld Player Friend Code")
+    @app_commands.command(
+        name="fc", description=f"Show {cfg.DISPLAY_NAME} Player Friend Code"
+    )
     @app_commands.describe(name="Player name, discord id, or mkc id (optional)")
     async def fc(self, interaction: discord.Interaction, name: str | None = None):
         if name is None:
             name = str(interaction.user.id)
         player = await data_handler.fetch_player(
-            name, season=os.getenv("CURRENT_SEASON"), game_mode="24p"
+            name, season=os.getenv("CURRENT_SEASON"), game_mode=cfg.DEFAULT_GAME_MODE
         )
 
         if player is None:
@@ -508,7 +606,7 @@ class Stats(commands.Cog):
 
         embed = discord.Embed(
             title=f"Friend Code for {player['name']}",
-            url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['id']}",
+            url=cfg.player_url(player["id"]),
             timestamp=dt.datetime.now(dt.UTC),
         )
 
@@ -521,26 +619,22 @@ class Stats(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(
-        name="tiers", description="Show MKWorld Player Performance by Tier"
+        name="tiers", description=f"Show {cfg.DISPLAY_NAME} Player Performance by Tier"
     )
     @app_commands.describe(
         name="Lounge name, discord id, mkc id (optional)",
         season="Season number (default: current season)",
-        game_mode="Game mode (default: 24p)",
     )
-    @app_commands.choices(
-        game_mode=[
-            app_commands.Choice(name="24p", value="24p"),
-            app_commands.Choice(name="12p", value="12p"),
-        ]
-    )
+    @game_mode_option
     async def tiers(
         self,
         interaction: discord.Interaction,
         name: str | None = None,
         season: int | None = int(os.getenv("CURRENT_SEASON")),
-        game_mode: str | None = "24p",
+        game_mode: str | None = cfg.DEFAULT_GAME_MODE,
     ):
+        if await reject_unsupported_season(interaction, season):
+            return
         await interaction.response.defer()
 
         if name is None:
@@ -563,22 +657,7 @@ class Stats(commands.Cog):
             )
             return
 
-        tier_order = [
-            "SQ",
-            "X",
-            "S",
-            "AB",
-            "A",
-            "B",
-            "BC",
-            "C",
-            "CD",
-            "D",
-            "DE",
-            "E",
-            "EF",
-            "F",
-        ]
+        tier_order = TIER_ORDER
 
         buckets = {}
         for e in table_events:
@@ -653,10 +732,10 @@ class Stats(commands.Cog):
         )
         file = discord.File(plot_image, filename="tiers.png")
 
-        rank_data = constants.get_rank_data(season)[player["rank"]]
+        rank_data = constants.get_rank_info(player["rank"])
         embed = discord.Embed(
-            title=f"S{season} Tiers - MKWorld{game_mode.upper()}",
-            url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
+            title=f"S{season} Tiers - {cfg.label(game_mode)}",
+            url=cfg.player_url(player["playerId"], game_mode),
             description=f"### {player['name']} [{player['countryCode']}]",
             colour=int(f"0x{rank_data['color'][1:]}", 16),
             timestamp=dt.datetime.now(dt.UTC),
@@ -695,6 +774,161 @@ class Stats(commands.Cog):
         await interaction.followup.send(embed=embed, file=file)
 
     @app_commands.command(
+        name="fs", description=f"Show {cfg.DISPLAY_NAME} Player Performance by Format"
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+    )
+    @game_mode_option
+    async def fs(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = cfg.DEFAULT_GAME_MODE,
+    ):
+        if await reject_unsupported_season(interaction, season):
+            return
+        await interaction.response.defer()
+
+        if name is None:
+            name = str(interaction.user.id)
+        player = await data_handler.fetch_player_info(name, season, game_mode)
+
+        if player is None:
+            await interaction.followup.send(
+                f"Player '{name}' not found.", ephemeral=True
+            )
+            return
+
+        table_events = [
+            e for e in player.get("mmrChanges", []) if e.get("reason") == "Table"
+        ]
+        if not table_events:
+            await interaction.followup.send(
+                "You have to play at least 1 match to check your format stats.",
+                ephemeral=True,
+            )
+            return
+
+        buckets = {}
+        for e in table_events:
+            f = _derive_format(e.get("numTeams", 0) or 0, game_mode)
+            b = buckets.setdefault(
+                f,
+                {
+                    "events": 0,
+                    "delta_sum": 0,
+                    "rank_sum": 0,
+                    "score_sum": 0,
+                    "wins": 0,
+                    "win_delta_sum": 0,
+                    "loss_delta_sum": 0,
+                    "losses": 0,
+                    "firsts": 0,
+                    "tops": 0,
+                    "bottoms": 0,
+                },
+            )
+            b["events"] += 1
+            delta = e.get("mmrDelta", 0)
+            rank = e.get("rank", 0)
+            num_teams = e.get("numTeams", 1) or 1
+            b["delta_sum"] += delta
+            b["rank_sum"] += rank
+            b["score_sum"] += e.get("score", 0)
+            if delta > 0:
+                b["wins"] += 1
+                b["win_delta_sum"] += delta
+            elif delta < 0:
+                b["losses"] += 1
+                b["loss_delta_sum"] += delta
+            if rank == 1:
+                b["firsts"] += 1
+            if rank <= num_teams * 0.25:
+                b["tops"] += 1
+            if rank > num_teams * 0.75:
+                b["bottoms"] += 1
+
+        sorted_formats = sorted(
+            buckets.items(),
+            key=lambda kv: (
+                FORMAT_ORDER.index(kv[0])
+                if kv[0] in FORMAT_ORDER
+                else len(FORMAT_ORDER)
+            ),
+        )
+
+        format_rows = []
+        for format_name, b in sorted_formats:
+            n = b["events"]
+            format_rows.append(
+                {
+                    "format": format_name,
+                    "n": n,
+                    "win_rate": b["wins"] / n * 100,
+                    "avg_delta": b["delta_sum"] / n,
+                    "total": b["delta_sum"],
+                    "avg_rank": b["rank_sum"] / n,
+                    "avg_score": b["score_sum"] / n,
+                    "firsts": b["firsts"],
+                    "tops": b["tops"],
+                    "bottoms": b["bottoms"],
+                }
+            )
+
+        plot_image = create_formats_plot(
+            format_rows=format_rows,
+            season=season,
+            player_name=player["name"],
+            country_code=player.get("countryCode", ""),
+            game_mode=game_mode,
+        )
+        file = discord.File(plot_image, filename="formats.png")
+
+        rank_data = constants.get_rank_info(player["rank"])
+        embed = discord.Embed(
+            title=f"S{season} Formats - {cfg.label(game_mode)}",
+            url=cfg.player_url(player["playerId"], game_mode),
+            description=f"### {player['name']} [{player['countryCode']}]",
+            colour=int(f"0x{rank_data['color'][1:]}", 16),
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+        embed.set_image(url="attachment://formats.png")
+
+        best_format = max(
+            sorted_formats, key=lambda kv: kv[1]["delta_sum"] / kv[1]["events"]
+        )
+        worst_format = min(
+            sorted_formats, key=lambda kv: kv[1]["delta_sum"] / kv[1]["events"]
+        )
+        most_played = max(sorted_formats, key=lambda kv: kv[1]["events"])
+        embed.add_field(
+            name="Best Format",
+            value=f"{best_format[0]} ({best_format[1]['delta_sum'] / best_format[1]['events']:+.0f} avg)",  # noqa: E501
+            inline=True,
+        )
+        embed.add_field(
+            name="Worst Format",
+            value=f"{worst_format[0]} ({worst_format[1]['delta_sum'] / worst_format[1]['events']:+.0f} avg)",  # noqa: E501
+            inline=True,
+        )
+        embed.add_field(
+            name="Most Played",
+            value=f"{most_played[0]} ({most_played[1]['events']} events)",
+            inline=True,
+        )
+
+        embed.set_footer(
+            text="MKCentral Lounge",
+            icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+        )
+        embed.set_thumbnail(url=rank_data["url"])
+
+        await interaction.followup.send(embed=embed, file=file)
+
+    @app_commands.command(
         name="h2h",
         description="Compare two players' shared matches (head-to-head)",
     )
@@ -702,22 +936,18 @@ class Stats(commands.Cog):
         name1="First player (lounge name, discord id, or mkc id)",
         name2="Second player (defaults to you)",
         season="Season number (default: current season)",
-        game_mode="Game mode (default: 24p)",
     )
-    @app_commands.choices(
-        game_mode=[
-            app_commands.Choice(name="24p", value="24p"),
-            app_commands.Choice(name="12p", value="12p"),
-        ]
-    )
+    @game_mode_option
     async def h2h(
         self,
         interaction: discord.Interaction,
         name1: str,
         name2: str | None = None,
         season: int | None = int(os.getenv("CURRENT_SEASON")),
-        game_mode: str | None = "24p",
+        game_mode: str | None = cfg.DEFAULT_GAME_MODE,
     ):
+        if await reject_unsupported_season(interaction, season):
+            return
         await interaction.response.defer()
 
         if name2 is None:
@@ -871,7 +1101,7 @@ class Stats(commands.Cog):
         file = discord.File(plot_image, filename="h2h.png")
 
         embed = discord.Embed(
-            title=f"S{season} Head-to-Head - MKWorld{game_mode.upper()}",
+            title=f"S{season} Head-to-Head - {cfg.label(game_mode)}",
             description=f"### {p1['name']} vs {p2['name']}",
             colour=0x1DA3DD,
             timestamp=dt.datetime.now(dt.UTC),
@@ -881,6 +1111,305 @@ class Stats(commands.Cog):
             text="MKCentral Lounge",
             icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
         )
+        await interaction.followup.send(embed=embed, file=file)
+
+    @app_commands.command(
+        name="partner",
+        description="Compare two players' shared matches as partners",
+    )
+    @app_commands.describe(
+        name1="First player (lounge name, discord id, or mkc id)",
+        name2="Second player (defaults to you)",
+        season="Season number (default: current season)",
+    )
+    @game_mode_option
+    async def partner(
+        self,
+        interaction: discord.Interaction,
+        name1: str,
+        name2: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = cfg.DEFAULT_GAME_MODE,
+    ):
+        if await reject_unsupported_season(interaction, season):
+            return
+        await interaction.response.defer()
+
+        if name2 is None:
+            name2 = name1
+            name1 = str(interaction.user.id)
+
+        p1 = await data_handler.fetch_player_info(name1, season, game_mode)
+        if p1 is None:
+            await interaction.followup.send(
+                f"Player '{name1}' not found.", ephemeral=True
+            )
+            return
+        p2 = await data_handler.fetch_player_info(name2, season, game_mode)
+        if p2 is None:
+            await interaction.followup.send(
+                f"Player '{name2}' not found.", ephemeral=True
+            )
+            return
+
+        if p1.get("playerId") == p2.get("playerId"):
+            await interaction.followup.send(
+                "You can't compare a player to themselves.", ephemeral=True
+            )
+            return
+
+        c1 = {
+            e["changeId"]: e
+            for e in p1.get("mmrChanges", [])
+            if e.get("reason") == "Table" and "changeId" in e
+        }
+        c2 = {
+            e["changeId"]: e
+            for e in p2.get("mmrChanges", [])
+            if e.get("reason") == "Table" and "changeId" in e
+        }
+        shared = set(c1) & set(c2)
+
+        pid1, pid2 = p1["playerId"], p2["playerId"]
+        partner_ids = sorted(
+            [
+                cid
+                for cid in shared
+                if pid2 in (c1[cid].get("partnerIds") or [])
+                or pid1 in (c2[cid].get("partnerIds") or [])
+            ],
+            key=lambda k: c1[k]["time"],
+            reverse=True,
+        )
+
+        if not partner_ids:
+            await interaction.followup.send(
+                f"{p1['name']} and {p2['name']} have not played as partners "
+                f"in {game_mode} S{season}.",
+                ephemeral=True,
+            )
+            return
+
+        n = len(partner_ids)
+        deltas = [c1[cid].get("mmrDelta", 0) for cid in partner_ids]
+        wins = sum(1 for d in deltas if d > 0)
+        losses = sum(1 for d in deltas if d < 0)
+        total_delta = sum(deltas)
+
+        scores1 = [c1[cid].get("score", 0) for cid in partner_ids]
+        scores2 = [c2[cid].get("score", 0) for cid in partner_ids]
+        ranks = [c1[cid].get("rank", 0) for cid in partner_ids]
+
+        p1_avg = sum(scores1) / n
+        p2_avg = sum(scores2) / n
+        avg_rank = sum(ranks) / n
+        win_rate = wins / n
+        p1_best = max(scores1)
+        p2_best = max(scores2)
+
+        def _best_performance(scorer_changes, other_changes):
+            best_cid = max(partner_ids, key=lambda k: scorer_changes[k].get("score", 0))
+            e_self = scorer_changes[best_cid]
+            e_other = other_changes[best_cid]
+            return {
+                "date": e_self["time"][:10],
+                "tier": e_self.get("tier", "?"),
+                "table_id": best_cid,
+                "self_score": e_self.get("score", 0),
+                "other_score": e_other.get("score", 0),
+                "rank": e_self.get("rank", 0),
+                "num_teams": e_self.get("numTeams", 0),
+                "delta": e_self.get("mmrDelta", 0),
+            }
+
+        p1_best_match = _best_performance(c1, c2)
+        p2_best_match = _best_performance(c2, c1)
+
+        recent = []
+        for cid in partner_ids[:10]:
+            e1 = c1[cid]
+            e2 = c2[cid]
+            recent.append(
+                {
+                    "date": e1["time"][:10],
+                    "tier": e1.get("tier", "?"),
+                    "p1_score": e1.get("score", 0),
+                    "p2_score": e2.get("score", 0),
+                    "rank": e1.get("rank", 0),
+                    "num_teams": e1.get("numTeams", 0),
+                    "delta": e1.get("mmrDelta", 0),
+                }
+            )
+
+        stats = {
+            "p1_name": p1["name"],
+            "p2_name": p2["name"],
+            "p1_country": p1.get("countryCode", ""),
+            "p2_country": p2.get("countryCode", ""),
+            "p1_mmr": p1.get("mmr"),
+            "p2_mmr": p2.get("mmr"),
+            "shared": n,
+            "wins": wins,
+            "losses": losses,
+            "total_delta": total_delta,
+            "p1_avg_score": p1_avg,
+            "p2_avg_score": p2_avg,
+            "p1_best_score": p1_best,
+            "p2_best_score": p2_best,
+            # avg_rank is computed and exposed for future use but not
+            # currently rendered in the partner plot.
+            "avg_rank": avg_rank,
+            "win_rate": win_rate,
+            "p1_best_match": p1_best_match,
+            "p2_best_match": p2_best_match,
+            "recent": recent,
+        }
+
+        plot_image = create_partner_plot(
+            stats=stats, season=season, game_mode=game_mode
+        )
+        file = discord.File(plot_image, filename="partner.png")
+
+        embed = discord.Embed(
+            title=f"S{season} Partner - {cfg.label(game_mode)}",
+            description=f"### {p1['name']} & {p2['name']}",
+            colour=0x1DA3DD,
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+        embed.set_image(url="attachment://partner.png")
+        embed.set_footer(
+            text="MKCentral Lounge",
+            icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+        )
+        await interaction.followup.send(embed=embed, file=file)
+
+    @app_commands.command(
+        name="scores", description=f"Show {cfg.DISPLAY_NAME} Player Score Breakdown"
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        tier="Filter by tier (default: all tiers)",
+        last="Limit to the last N matches (default: all matches)",
+        show_partner_scores="Overlay partner scores on the plot (default: No)",
+    )
+    @app_commands.choices(
+        tier=[app_commands.Choice(name=t, value=t) for t in TIER_ORDER],
+        show_partner_scores=[
+            app_commands.Choice(name="Yes", value="yes"),
+            app_commands.Choice(name="No", value="no"),
+        ],
+    )
+    @game_mode_option
+    async def scores(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = cfg.DEFAULT_GAME_MODE,
+        tier: str | None = None,
+        last: int | None = None,
+        show_partner_scores: str | None = "no",
+    ):
+        if await reject_unsupported_season(interaction, season):
+            return
+        await interaction.response.defer()
+
+        if name is None:
+            name = str(interaction.user.id)
+        player = await data_handler.fetch_player_info(name, season, game_mode)
+
+        if player is None:
+            await interaction.followup.send(
+                f"Player '{name}' not found.", ephemeral=True
+            )
+            return
+
+        table_events = [
+            e for e in player.get("mmrChanges", []) if e.get("reason") == "Table"
+        ]
+        # API returns most recent first; reverse so x-axis is oldest -> newest
+        table_events.reverse()
+
+        if tier is not None:
+            table_events = [e for e in table_events if e.get("tier") == tier]
+
+        if last is not None and last > 0:
+            table_events = table_events[-last:]
+
+        scores_list = [e.get("score", 0) for e in table_events]
+
+        if len(scores_list) < 2:
+            tier_msg = f" in tier {tier}" if tier else ""
+            await interaction.followup.send(
+                f"Not enough {game_mode} matches{tier_msg} to build a score breakdown.",
+                ephemeral=True,
+            )
+            return
+
+        avg_score = statistics.mean(scores_list)
+        median_score = statistics.median(scores_list)
+        top_score = max(scores_list)
+        std_dev = statistics.stdev(scores_list)
+
+        if last is not None and last > 0:
+            label = f"Last {len(scores_list)} Matches"
+        else:
+            label = f"In the Last {len(scores_list)} Matches"
+
+        show_partners = show_partner_scores == "yes"
+        partner_scores_per_match = None
+        partner_avg = None
+        if show_partners:
+            partner_scores_per_match = [
+                e.get("partnerScores", []) or [] for e in table_events
+            ]
+            flat_partner_scores = [
+                p for partners in partner_scores_per_match for p in partners
+            ]
+            partner_avg = (
+                statistics.mean(flat_partner_scores) if flat_partner_scores else None
+            )
+
+        plot_image = create_scores_plot(
+            scores=scores_list,
+            average=avg_score,
+            season=season,
+            player_name=player["name"],
+            country_code=player.get("countryCode", ""),
+            game_mode=game_mode,
+            tier=tier,
+            label=label,
+            partner_scores=partner_scores_per_match,
+            partner_average=partner_avg,
+        )
+        file = discord.File(plot_image, filename="scores.png")
+
+        rank_data = constants.get_rank_info(player["rank"])
+        title_tier = f" | Tier: {tier}" if tier else ""
+        embed = discord.Embed(
+            title=f"S{season} Scores{title_tier} | {label}",
+            url=cfg.player_url(player["playerId"], game_mode),
+            description=f"### {player['name']} [{player['countryCode']}]",
+            colour=int(f"0x{rank_data['color'][1:]}", 16),
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+
+        embed.add_field(name="Average Score", value=f"{avg_score:.1f}", inline=True)
+        embed.add_field(name="Top Score", value=f"{top_score}", inline=True)
+        embed.add_field(name="​", value="​", inline=True)
+
+        embed.add_field(name="Median Score", value=f"{median_score:g}", inline=True)
+        embed.add_field(name="Standard Deviation", value=f"{std_dev:.1f}", inline=True)
+        embed.add_field(name="​", value="​", inline=True)
+
+        embed.set_image(url="attachment://scores.png")
+        embed.set_footer(
+            text="MKCentral Lounge",
+            icon_url="https://raw.githubusercontent.com/VikeMK/Lounge-API/refs/heads/main/src/Lounge.Web/wwwroot/favicon.ico",
+        )
+        embed.set_thumbnail(url=rank_data["url"])
+
         await interaction.followup.send(embed=embed, file=file)
 
     @app_commands.command(name="calc", description="Calculate Expected MMR changes")
@@ -920,7 +1449,7 @@ class Stats(commands.Cog):
 
         embed = discord.Embed(
             title=f"Expected MMR Changes for Table ID: {table_id}",
-            url=os.getenv("WEBSITE_URL") + f"/mkworld/TableDetails/{table_id}",
+            url=cfg.table_url(table_id),
             colour=0x1DA3DD,
             timestamp=dt.datetime.now(dt.UTC),
         )
@@ -935,26 +1464,22 @@ class Stats(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(
-        name="streak", description="Show MKWorld Player Win/Loss Streaks"
+        name="streak", description=f"Show {cfg.DISPLAY_NAME} Player Win/Loss Streaks"
     )
     @app_commands.describe(
         name="Lounge name, discord id, mkc id (optional)",
         season="Season number (default: current season)",
-        game_mode="Game mode (default: 24p)",
     )
-    @app_commands.choices(
-        game_mode=[
-            app_commands.Choice(name="24p", value="24p"),
-            app_commands.Choice(name="12p", value="12p"),
-        ]
-    )
+    @game_mode_option
     async def streak(
         self,
         interaction: discord.Interaction,
         name: str | None = None,
         season: int | None = int(os.getenv("CURRENT_SEASON")),
-        game_mode: str | None = "24p",
+        game_mode: str | None = cfg.DEFAULT_GAME_MODE,
     ):
+        if await reject_unsupported_season(interaction, season):
+            return
         await interaction.response.defer()
 
         if name is None:
@@ -1063,10 +1588,12 @@ class Stats(commands.Cog):
         else:
             kind = "Win" if latest_sign == 1 else "Loss"
             cur_label = f"Current {kind} Streak"
-            cur_value = f"```\n{cur_count} matches ({cur_delta:+d} MMR)\n```"
+            cur_noun = "match" if cur_count == 1 else "matches"
+            cur_value = f"```\n{cur_count} {cur_noun} ({cur_delta:+d} MMR)\n```"
 
+        win_noun = "match" if longest_win["count"] == 1 else "matches"
         win_value = (
-            f"```\n{longest_win['count']} matches ({longest_win['delta']:+d} MMR)\n```"
+            f"```\n{longest_win['count']} {win_noun} ({longest_win['delta']:+d} MMR)\n```"
             if longest_win["count"] > 0
             else "```\nNone\n```"
         )
@@ -1074,8 +1601,9 @@ class Stats(commands.Cog):
             longest_win["start"], longest_win["end"], active=win_active
         )
 
+        loss_noun = "match" if longest_loss["count"] == 1 else "matches"
         loss_value = (
-            f"```\n{longest_loss['count']} matches ({longest_loss['delta']:+d} MMR)\n```"  # noqa: E501
+            f"```\n{longest_loss['count']} {loss_noun} ({longest_loss['delta']:+d} MMR)\n```"  # noqa: E501
             if longest_loss["count"] > 0
             else "```\nNone\n```"
         )
@@ -1099,11 +1627,11 @@ class Stats(commands.Cog):
         )
         file = discord.File(plot_image, filename="streak.png")
 
-        rank_data = constants.get_rank_data(season)[player["rank"]]
+        rank_data = constants.get_rank_info(player["rank"])
         mmr_suffix = f" · {player['mmr']} MMR" if player.get("mmr") is not None else ""
         embed = discord.Embed(
-            title=f"S{season} Streaks - MKWorld{game_mode.upper()}",
-            url=f"https://lounge.mkcentral.com/mkworld/PlayerDetails/{player['playerId']}?p={game_mode[0:1]}",
+            title=f"S{season} Streaks - {cfg.label(game_mode)}",
+            url=cfg.player_url(player["playerId"], game_mode),
             description=f"### {player['name']}{mmr_suffix} [{player['countryCode']}]",
             colour=int(f"0x{rank_data['color'][1:]}", 16),
             timestamp=dt.datetime.now(dt.UTC),
@@ -1128,6 +1656,190 @@ class Stats(commands.Cog):
 
         await interaction.followup.send(embed=embed, file=file)
 
+    async def _activity_histogram(
+        self,
+        interaction: discord.Interaction,
+        name: str | None,
+        season: int | None,
+        game_mode: str | None,
+        timezone: str | None,
+        period: str,
+    ):
+        if await reject_unsupported_season(interaction, season):
+            return
+        await interaction.response.defer()
+
+        resolved = _resolve_timezone(timezone)
+        if resolved is None:
+            supported = ", ".join(sorted(ABBREV_TO_IANA))
+            await interaction.followup.send(
+                f"Unknown timezone '{timezone}'. Supported: {supported}.",
+                ephemeral=True,
+            )
+            return
+        tz_label, tz = resolved
+
+        if name is None:
+            name = str(interaction.user.id)
+        player = await data_handler.fetch_player_info(name, season, game_mode)
+
+        if player is None:
+            await interaction.followup.send(
+                f"Player '{name}' not found.", ephemeral=True
+            )
+            return
+
+        table_events = [
+            e for e in player.get("mmrChanges", []) if e.get("reason") == "Table"
+        ]
+
+        if period == "daily":
+            cutoff_date = dt.datetime.now(tz).date() - dt.timedelta(days=14)
+            buckets: dict = {}
+            for e in table_events:
+                local_dt = datetime.fromisoformat(e["time"]).astimezone(tz)
+                d = local_dt.date()
+                if d >= cutoff_date:
+                    b = buckets.setdefault(d, {"count": 0, "delta": 0})
+                    b["count"] += 1
+                    b["delta"] += e.get("mmrDelta", 0)
+            ordered = sorted(buckets.items())
+            lines = []
+            for d, b in ordered:
+                ts = int(dt.datetime.combine(d, dt.time(0, 0), tzinfo=tz).timestamp())
+                lines.append(f"<t:{ts}:d> : {b['count']} ({b['delta']:+d} MMR)")
+            field_value = "\n".join(lines) if lines else ""
+            empty_msg = (
+                f"{player['name']} has no {game_mode} matches in the last 14 days."
+            )
+            title = f"S{season} Daily Data - {cfg.label(game_mode)}"
+        elif period == "weekly":
+            buckets = {}
+            for e in table_events:
+                local_dt = datetime.fromisoformat(e["time"]).astimezone(tz)
+                d = local_dt.date()
+                monday = d - dt.timedelta(days=d.weekday())
+                sunday = monday + dt.timedelta(days=6)
+                key = (monday, sunday)
+                b = buckets.setdefault(key, {"count": 0, "delta": 0})
+                b["count"] += 1
+                b["delta"] += e.get("mmrDelta", 0)
+            ordered = sorted(buckets.items(), key=lambda kv: kv[0][0])
+            lines = [
+                f"{monday.isoformat()}/{sunday.isoformat()}: "
+                f"{b['count']} ({b['delta']:+d} MMR)"
+                for (monday, sunday), b in ordered
+            ]
+            field_value = "```\n" + "\n".join(lines) + "\n```" if lines else ""
+            empty_msg = f"{player['name']} has no {game_mode} matches this season."
+            title = f"S{season} Weekly Data - {cfg.label(game_mode)}"
+        else:  # monthly
+            buckets = {}
+            for e in table_events:
+                local_dt = datetime.fromisoformat(e["time"]).astimezone(tz)
+                key = local_dt.strftime("%Y-%m")
+                b = buckets.setdefault(key, {"count": 0, "delta": 0})
+                b["count"] += 1
+                b["delta"] += e.get("mmrDelta", 0)
+            ordered = sorted(buckets.items())
+            lines = [f"{ym}: {b['count']} ({b['delta']:+d} MMR)" for ym, b in ordered]
+            field_value = "\n".join(lines) if lines else ""
+            empty_msg = f"{player['name']} has no {game_mode} matches this season."
+            title = f"S{season} Monthly Data - {cfg.label(game_mode)}"
+
+        if not lines:
+            await interaction.followup.send(empty_msg, ephemeral=True)
+            return
+
+        total = sum(b["count"] for _, b in ordered)
+        total_delta = sum(b["delta"] for _, b in ordered)
+
+        mmr = player.get("mmr")
+        mmr_part = f" - {mmr} MMR" if mmr is not None else ""
+
+        rank_data = constants.get_rank_info(player["rank"])
+        embed = discord.Embed(
+            title=title,
+            url=cfg.player_url(player["playerId"], game_mode),
+            description=f"### {player['name']} [{player['countryCode']}]{mmr_part}",
+            colour=int(f"0x{rank_data['color'][1:]}", 16),
+            timestamp=dt.datetime.now(dt.UTC),
+        )
+        embed.add_field(
+            name=f"Events Played: {total} ({total_delta:+d} MMR)",
+            value=field_value,
+            inline=False,
+        )
+        embed.set_footer(text=f"Timezone: {tz_label} · MKCentral Lounge")
+        embed.set_thumbnail(url=rank_data["url"])
+
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(
+        name="dd",
+        description=f"Show {cfg.DISPLAY_NAME} events played per day (last 14 days)",
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        timezone="Timezone abbreviation, e.g. EST, JST (default: UTC)",
+    )
+    @game_mode_option
+    async def dd(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = cfg.DEFAULT_GAME_MODE,
+        timezone: str | None = "UTC",
+    ):
+        await self._activity_histogram(
+            interaction, name, season, game_mode, timezone, "daily"
+        )
+
+    @app_commands.command(
+        name="wd",
+        description=f"Show {cfg.DISPLAY_NAME} events played per week (this season)",
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        timezone="Timezone abbreviation, e.g. EST, JST (default: UTC)",
+    )
+    @game_mode_option
+    async def wd(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = cfg.DEFAULT_GAME_MODE,
+        timezone: str | None = "UTC",
+    ):
+        await self._activity_histogram(
+            interaction, name, season, game_mode, timezone, "weekly"
+        )
+
+    @app_commands.command(
+        name="md",
+        description=f"Show {cfg.DISPLAY_NAME} events played per month (this season)",
+    )
+    @app_commands.describe(
+        name="Lounge name, discord id, mkc id (optional)",
+        season="Season number (default: current season)",
+        timezone="Timezone abbreviation, e.g. EST, JST (default: UTC)",
+    )
+    @game_mode_option
+    async def md(
+        self,
+        interaction: discord.Interaction,
+        name: str | None = None,
+        season: int | None = int(os.getenv("CURRENT_SEASON")),
+        game_mode: str | None = cfg.DEFAULT_GAME_MODE,
+        timezone: str | None = "UTC",
+    ):
+        await self._activity_histogram(
+            interaction, name, season, game_mode, timezone, "monthly"
+        )
 
     @app_commands.command(
         name="predict",
@@ -1156,9 +1868,11 @@ class Stats(commands.Cog):
         players_per_team = len(teams[0]["names"])
         num_players = num_teams * players_per_team
 
-        if num_players not in (12, 24):
+        supported_sizes = (12, 24) if _MAX_PLAYERS == 24 else (12,)
+        if num_players not in supported_sizes:
+            expected = "- or ".join(str(size) for size in supported_sizes)
             await interaction.followup.send(
-                f"Only 12- or 24-player rooms are supported (parsed "
+                f"Only {expected}-player rooms are supported (parsed "
                 f"{num_players} players in {num_teams} teams).",
                 ephemeral=True,
             )
@@ -1223,8 +1937,7 @@ class Stats(commands.Cog):
             return {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
 
         cells = [
-            f"{p}{ord_suffix(p)}: {deltas[p - 1]:+d}"
-            for p in range(1, num_teams + 1)
+            f"{p}{ord_suffix(p)}: {deltas[p - 1]:+d}" for p in range(1, num_teams + 1)
         ]
         cell_w = max(len(c) for c in cells)
         # Cap at 2 columns so rows stay narrow enough for mobile Discord.

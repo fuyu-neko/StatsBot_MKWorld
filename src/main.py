@@ -7,6 +7,8 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from common import game_config as cfg
+
 load_dotenv()
 
 if os.getenv("DEBUG_MODE", "False").lower() == "true":
@@ -38,6 +40,32 @@ class StatsBot(commands.AutoShardedBot):
 bot = StatsBot()
 
 
+@bot.tree.error
+async def on_app_command_error(
+    interaction: discord.Interaction,
+    error: app_commands.AppCommandError,
+):
+    if isinstance(error, app_commands.MissingAnyRole):
+        msg = "You don't have the required role to execute this command."
+    elif isinstance(error, app_commands.NoPrivateMessage):
+        msg = "This command cannot be used in private messages."
+    elif isinstance(error, app_commands.CheckFailure):
+        msg = "You don't meet the requirements to execute this command."
+    else:
+        cmd_name = interaction.command.name if interaction.command else "?"
+        logging.error(
+            f"App command error in /{cmd_name} "
+            f"by {interaction.user} (id={interaction.user.id}) "
+            f"in guild={interaction.guild_id}",
+            exc_info=error,
+        )
+        msg = "An unexpected error occurred. Please try again later."
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, app_commands.CommandNotFound):
@@ -66,11 +94,25 @@ async def on_command_error(ctx, error):
         await ctx.send("An unexpected error occurred. Please try again later.")
 
 
+def get_bot_token() -> str:
+    env = os.getenv("ENVIRONMENT", "staging").lower()
+    if env not in ("staging", "production"):
+        raise RuntimeError(
+            f"ENVIRONMENT must be 'staging' or 'production', got '{env}'"
+        )
+    token_key = f"DISCORD_BOT_TOKEN_{env.upper()}"
+    token = os.getenv(token_key)
+    if not token:
+        raise RuntimeError(f"{token_key} is not set in environment")
+    logging.info(f"Starting {cfg.DISPLAY_NAME} bot in {env.upper()} mode")
+    return token
+
+
 async def main():
     async with bot:
         for extension in cogs:
             await bot.load_extension(extension)
-        await bot.start(os.getenv("DISCORD_BOT_TOKEN"))
+        await bot.start(get_bot_token())
 
 
 asyncio.run(main())

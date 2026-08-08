@@ -9,36 +9,41 @@ import matplotlib.image as mpimg
 import matplotlib.patches as mpatches
 import numpy as np
 from matplotlib.figure import Figure
+from matplotlib.offsetbox import AnchoredOffsetbox, HPacker, TextArea
+from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-from common.constants import get_mmr_definition, get_rank, rank_index
+from common import game_config as cfg
+from common.constants import (
+    get_mmr_colors,
+    get_mmr_definition,
+    get_rank,
+    get_subrank_lines,
+    rank_index,
+)
+
+
+def _mode_suffix(game_mode: str) -> str:
+    """' (24 player)' for a multi-mode game, '' when there is only one mode."""
+    display = cfg.mode_display(game_mode)
+    return f" ({display})" if display else ""
+
+
+def _mode_caption(game_mode: str) -> str:
+    """' · 24 player' for a multi-mode game, '' when there is only one mode."""
+    display = cfg.mode_display(game_mode)
+    return f" · {display}" if display else ""
 
 
 def create_plot(mmrhistory: list, season: int, player_name: str, game_mode: str):
     b = BytesIO()
 
-    # Convert game_mode for display
-    if season == 0 or season == 1:
-        game_mode_display = None
-    elif game_mode == "12p":
-        game_mode_display = "12 player"
-    elif game_mode == "24p":
-        game_mode_display = "24 player"
+    # Seasons 0-1 ran a single ladder, so the mode is not worth showing.
+    mode_suffix = "" if season <= 1 else _mode_suffix(game_mode)
 
     ranks = get_mmr_definition(season, game_mode)
-
-    colors = [
-        "#817876",
-        "#E67E22",
-        "#7D8396",
-        "#F1C40F",
-        "#3FABB8",
-        "#286CD3",
-        "#d51c5e",
-        "#9CCBD6",
-        "#0E0B0B",
-        "#A3022C",
-    ]
+    colors = get_mmr_colors(season, game_mode)
+    subrank_lines = get_subrank_lines(season, game_mode)
 
     matplotlib.rcParams.update(
         matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
@@ -68,7 +73,7 @@ def create_plot(mmrhistory: list, season: int, player_name: str, game_mode: str)
     ax_header.text(
         0.08,
         0.5,
-        "MKCentral MKWorld Lounge",
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
         transform=ax_header.transAxes,
         fontsize=13,
         fontweight="bold",
@@ -81,10 +86,7 @@ def create_plot(mmrhistory: list, season: int, player_name: str, game_mode: str)
     ax_title = fig.add_subplot(gs[1])
     ax_title.set_axis_off()
     title_text = f"Season{season} : {player_name}"
-    if game_mode_display:
-        title_text = f"Season{season} ({game_mode_display}) : {player_name}"
-    else:
-        title_text = f"Season{season} : {player_name}"
+    title_text = f"Season{season}{mode_suffix} : {player_name}"
     ax_title.text(
         0.5,
         0.5,
@@ -146,6 +148,12 @@ def create_plot(mmrhistory: list, season: int, player_name: str, game_mode: str)
             ax.fill_between(xs, minfill, maxfill, color="#0E0B0B")
         else:
             ax.fill_between(xs, minfill, maxfill, color=colors[i])
+
+    # Sub-ranks (e.g. Iron 1 / Iron 2) share a band, split by a divider line.
+    visible_lines = [line for line in subrank_lines if ymin <= line <= ymax]
+    if visible_lines:
+        ax.hlines(visible_lines, xmin, xmax, colors="snow", linewidth=1)
+
     ax.fill_between(xs, ymin, mmrhistory, facecolor="#212121", alpha=0.4)
 
     # --- Rank milestone & Peak MMR annotations ---
@@ -213,6 +221,188 @@ def create_plot(mmrhistory: list, season: int, player_name: str, game_mode: str)
     return b
 
 
+def create_scores_plot(
+    scores: list,
+    average: float,
+    season: int,
+    player_name: str,
+    country_code: str,
+    game_mode: str,
+    tier: str | None,
+    label: str,
+    partner_scores: list | None = None,
+    partner_average: float | None = None,
+):
+    b = BytesIO()
+
+    matplotlib.rcParams.update(
+        matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
+    )
+
+    mode_suffix = _mode_suffix(game_mode)
+
+    fig = Figure(figsize=(10, 6.5))
+    gs = gridspec.GridSpec(
+        3, 1, height_ratios=[0.10, 0.06, 1.0], hspace=0.0, figure=fig
+    )
+
+    # --- Header ---
+    ax_header = fig.add_subplot(gs[0])
+    ax_header.set_axis_off()
+    try:
+        favicon = mpimg.imread("src/common/favicon.ico")
+        ax_inset = inset_axes(
+            ax_header,
+            width="4%",
+            height="80%",
+            loc="center left",
+            borderpad=0.5,
+        )
+        ax_inset.imshow(favicon)
+        ax_inset.set_axis_off()
+    except Exception:
+        pass
+    ax_header.text(
+        0.08,
+        0.5,
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
+        transform=ax_header.transAxes,
+        fontsize=13,
+        fontweight="bold",
+        color="white",
+        verticalalignment="center",
+    )
+    ax_header.axhline(y=0, color="white", linewidth=0.5, alpha=0.3)
+
+    # --- Title ---
+    ax_title = fig.add_subplot(gs[1])
+    ax_title.set_axis_off()
+    flag = f" [{country_code}]" if country_code else ""
+    tier_part = f" | Tier: {tier}" if tier else ""
+    title_text = (
+        f"Season {season}{mode_suffix} Scores{tier_part} | {label}"
+        f" : {player_name}{flag}"
+    )
+    ax_title.text(
+        0.5,
+        0.5,
+        title_text,
+        transform=ax_title.transAxes,
+        fontsize=11,
+        color="white",
+        horizontalalignment="center",
+        verticalalignment="center",
+    )
+
+    # --- Main chart ---
+    ax = fig.add_subplot(gs[2])
+    xs = np.arange(1, len(scores) + 1)
+
+    ax.plot(
+        xs,
+        scores,
+        color="white",
+        linewidth=4.0,
+        alpha=0.18,
+        solid_capstyle="round",
+    )
+    ax.plot(
+        xs,
+        scores,
+        color="snow",
+        linewidth=1.4,
+        marker="o",
+        markersize=4,
+        markerfacecolor="#5BC0EB",
+        markeredgecolor="white",
+        markeredgewidth=0.6,
+        solid_capstyle="round",
+        label="Scores",
+    )
+
+    ax.axhline(
+        y=average,
+        color="#5BC0EB",
+        linewidth=1.2,
+        alpha=0.85,
+        label="Average Score",
+    )
+
+    if partner_scores is not None:
+        partner_xs = []
+        partner_ys = []
+        for x, partners in zip(xs, partner_scores):
+            for p in partners:
+                partner_xs.append(x)
+                partner_ys.append(p)
+            if len(partners) >= 2:
+                ax.plot(
+                    [x, x],
+                    [min(partners), max(partners)],
+                    linestyle=":",
+                    color="#E67E22",
+                    linewidth=1.2,
+                    alpha=0.9,
+                    zorder=2,
+                )
+        if partner_xs:
+            ax.scatter(
+                partner_xs,
+                partner_ys,
+                s=24,
+                color="#E67E22",
+                edgecolors="white",
+                linewidths=0.4,
+                alpha=0.9,
+                label="Partner Scores",
+                zorder=3,
+            )
+        if partner_average is not None:
+            ax.axhline(
+                y=partner_average,
+                color="#E67E22",
+                linewidth=1.2,
+                alpha=0.85,
+                label="Partner Average Score",
+            )
+
+    ax.set_ylabel("Score")
+    ax.set_xlabel("Match")
+    ax.grid(
+        True,
+        "both",
+        "both",
+        color="snow",
+        linestyle=":",
+        alpha=0.25,
+        linewidth=0.5,
+    )
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.tick_params(axis="both", labelsize=8)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True, min_n_ticks=1))
+    if len(scores) <= 12:
+        ax.set_xticks(list(xs))
+    ax.set_xlim(xs[0] - 0.5, xs[-1] + 0.5)
+    ax.fill_between(xs, ax.get_ylim()[0], scores, facecolor="#212121", alpha=0.4)
+
+    legend = ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.0),
+        borderaxespad=0.0,
+        fontsize=8,
+        framealpha=0.6,
+    )
+    for text in legend.get_texts():
+        text.set_color("white")
+
+    fig.savefig(b, format="png", bbox_inches="tight", dpi=150)
+    b.seek(0)
+    fig.clf()
+
+    return b
+
+
 def create_tiers_plot(
     tier_rows: list,
     season: int,
@@ -232,12 +422,7 @@ def create_tiers_plot(
         matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
     )
 
-    if game_mode == "12p":
-        game_mode_display = "12 player"
-    elif game_mode == "24p":
-        game_mode_display = "24 player"
-    else:
-        game_mode_display = game_mode
+    mode_suffix = _mode_suffix(game_mode)
 
     headers = [
         "Tier",
@@ -305,7 +490,7 @@ def create_tiers_plot(
     ax_header.text(
         0.08,
         0.5,
-        "MKCentral MKWorld Lounge",
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
         transform=ax_header.transAxes,
         fontsize=13,
         fontweight="bold",
@@ -318,7 +503,7 @@ def create_tiers_plot(
     ax_title = fig.add_subplot(gs[1])
     ax_title.set_axis_off()
     flag = f" [{country_code}]" if country_code else ""
-    title_text = f"Season {season} ({game_mode_display}) Tier Data: {player_name}{flag}"
+    title_text = f"Season {season}{mode_suffix} Tier Data: {player_name}{flag}"
     ax_title.text(
         0.5,
         0.5,
@@ -378,6 +563,155 @@ def create_tiers_plot(
     return b
 
 
+def create_formats_plot(
+    format_rows: list,
+    season: int,
+    player_name: str,
+    country_code: str,
+    game_mode: str,
+):
+    b = BytesIO()
+
+    matplotlib.rcParams.update(
+        matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
+    )
+
+    mode_suffix = _mode_suffix(game_mode)
+
+    headers = [
+        "Format",
+        "Events",
+        "W%",
+        "Avg Δ",
+        "Total",
+        "Avg Rk",
+        "Avg Sc",
+        "1sts",
+        "Top¼",
+        "Btm¼",
+    ]
+
+    cell_text = []
+    for r in format_rows:
+        cell_text.append(
+            [
+                r["format"],
+                f"{r['n']}",
+                f"{r['win_rate']:.0f}%",
+                f"{r['avg_delta']:+.0f}",
+                f"{r['total']:+d}",
+                f"{r['avg_rank']:.1f}",
+                f"{r['avg_score']:.1f}",
+                f"{r['firsts']}",
+                f"{r['tops']}",
+                f"{r['bottoms']}",
+            ]
+        )
+
+    n_rows = len(cell_text)
+    row_h = 0.40
+    header_h = 0.45
+    title_h = 0.30
+    table_h = row_h * (n_rows + 1)
+    fig_height = header_h + title_h + table_h
+    fig = Figure(figsize=(10, fig_height))
+    gs = gridspec.GridSpec(
+        3,
+        1,
+        height_ratios=[header_h, title_h, table_h],
+        hspace=0.0,
+        figure=fig,
+    )
+
+    ax_header = fig.add_subplot(gs[0])
+    ax_header.set_axis_off()
+    try:
+        favicon = mpimg.imread("src/common/favicon.ico")
+        ax_inset = inset_axes(
+            ax_header,
+            width="4%",
+            height="80%",
+            loc="center left",
+            borderpad=0.5,
+        )
+        ax_inset.imshow(favicon)
+        ax_inset.set_axis_off()
+    except Exception:
+        pass
+    ax_header.text(
+        0.08,
+        0.5,
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
+        transform=ax_header.transAxes,
+        fontsize=13,
+        fontweight="bold",
+        color="white",
+        verticalalignment="center",
+    )
+    ax_header.axhline(y=0, color="white", linewidth=0.5, alpha=0.3)
+
+    ax_title = fig.add_subplot(gs[1])
+    ax_title.set_axis_off()
+    flag = f" [{country_code}]" if country_code else ""
+    title_text = f"Season {season}{mode_suffix} Format Data: {player_name}{flag}"
+    ax_title.text(
+        0.5,
+        0.5,
+        title_text,
+        transform=ax_title.transAxes,
+        fontsize=11,
+        color="white",
+        horizontalalignment="center",
+        verticalalignment="center",
+    )
+
+    ax = fig.add_subplot(gs[2])
+    ax.set_axis_off()
+
+    table = ax.table(
+        cellText=cell_text,
+        colLabels=headers,
+        cellLoc="center",
+        bbox=[0, 0, 1, 1],
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+
+    n_cols = len(headers)
+    avg_delta_col = headers.index("Avg Δ")
+    total_col = headers.index("Total")
+
+    for col in range(n_cols):
+        header_cell = table[(0, col)]
+        header_cell.set_facecolor("#08234a")
+        header_cell.set_edgecolor("white")
+        header_cell.set_text_props(color="white", fontweight="bold")
+
+    for row_i in range(1, n_rows + 1):
+        for col in range(n_cols):
+            cell = table[(row_i, col)]
+            cell.set_edgecolor("#3a5a8a")
+            cell.set_linewidth(0.5)
+            cell.set_facecolor("#0a2d61" if row_i % 2 == 1 else "#0d3674")
+            cell.set_text_props(color="white")
+
+        for col in (avg_delta_col, total_col):
+            val_str = cell_text[row_i - 1][col]
+            color = "#7CFF9E" if val_str.startswith("+") else "#FF7C8A"
+            if val_str in ("+0", "0"):
+                color = "white"
+            table[(row_i, col)].set_text_props(color=color, fontweight="bold")
+
+        format_cell = table[(row_i, 0)]
+        format_cell.set_text_props(color="white", fontweight="bold")
+
+    fig.savefig(b, format="png", bbox_inches="tight", dpi=150, pad_inches=0.1)
+    b.seek(0)
+    fig.clf()
+
+    return b
+
+
 def create_streak_plot(
     events: list,
     current_streak_count: int,
@@ -388,27 +722,13 @@ def create_streak_plot(
     target_cells: int = 10,
     mmr: int | None = None,
 ):
-    """Render last-N matches as a colored W/L/T strip.
-
-    events: chronological list (oldest -> newest) of mmrChanges entries.
-        Each must include 'mmrDelta'.
-    current_streak_count: number of trailing cells to outline as the active
-        streak. 0 disables the highlight.
-    target_cells: nominal slot count for the strip. When fewer events are
-        provided, the x-axis is padded so cell pixel size stays constant.
-    """
     b = BytesIO()
 
     matplotlib.rcParams.update(
         matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
     )
 
-    if game_mode == "12p":
-        game_mode_display = "12 player"
-    elif game_mode == "24p":
-        game_mode_display = "24 player"
-    else:
-        game_mode_display = game_mode
+    mode_suffix = _mode_suffix(game_mode)
 
     n = len(events)
     if n == 0:
@@ -439,7 +759,7 @@ def create_streak_plot(
     ax_header.text(
         0.08,
         0.5,
-        "MKCentral MKWorld Lounge",
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
         transform=ax_header.transAxes,
         fontsize=13,
         fontweight="bold",
@@ -454,8 +774,7 @@ def create_streak_plot(
     flag = f" [{country_code}]" if country_code else ""
     mmr_suffix = f" · {mmr} MMR" if mmr is not None else ""
     title_text = (
-        f"Season {season} ({game_mode_display}) Recent Form: "
-        f"{player_name}{mmr_suffix}{flag}"
+        f"Season {season}{mode_suffix} Recent Form: {player_name}{mmr_suffix}{flag}"
     )
     ax_title.text(
         0.5,
@@ -547,40 +866,475 @@ def create_streak_plot(
     return b
 
 
-def create_h2h_plot(
+def create_partner_plot(
     stats: dict,
     season: int,
     game_mode: str,
 ):
-    """Render a head-to-head comparison as a styled image.
-
-    stats keys:
-        p1_name, p2_name, p1_country, p2_country,
-        p1_mmr, p2_mmr,
-        shared, teammate_count, opponent_count,
-        teammate_wins, teammate_losses,
-        p1_beats_p2, p2_beats_p1, ties,
-        p1_avg_score, p2_avg_score,
-        p1_avg_rank, p2_avg_rank,
-        p1_outscored, p2_outscored,
-        p1_mmr_delta, p2_mmr_delta,
-        p1_biggest_win, p2_biggest_win  (each: dict with date, tier,
-            game_mode, my_score, other_score, or None),
-        recent (list of dicts: date, tier, side, p1_score, p1_delta,
-                p2_score, p2_delta, p1_rank, p2_rank)
-    """
     b = BytesIO()
 
     matplotlib.rcParams.update(
         matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
     )
 
-    if game_mode == "12p":
-        game_mode_display = "12 player"
-    elif game_mode == "24p":
-        game_mode_display = "24 player"
-    else:
-        game_mode_display = game_mode
+    mode_suffix = _mode_suffix(game_mode)
+
+    p1, p2 = stats["p1_name"], stats["p2_name"]
+    recent = stats["recent"]
+
+    # --- Layout sizing ---
+    header_h = 0.45
+    title_h = 0.30
+    body_h = 2.6
+    highlight_h = 1.0
+    recent_rows = len(recent)
+    recent_h = 0.40 * (recent_rows + 1) if recent_rows else 0.0
+
+    fig_height = header_h + title_h + body_h + highlight_h + recent_h + 0.4
+    fig = Figure(figsize=(11, fig_height))
+    gs = gridspec.GridSpec(
+        5,
+        1,
+        height_ratios=[
+            header_h,
+            title_h,
+            body_h,
+            highlight_h,
+            max(recent_h, 0.001),
+        ],
+        hspace=0.18,
+        figure=fig,
+    )
+
+    # --- Header ---
+    ax_header = fig.add_subplot(gs[0])
+    ax_header.set_axis_off()
+    try:
+        favicon = mpimg.imread("src/common/favicon.ico")
+        ax_inset = inset_axes(
+            ax_header,
+            width="4%",
+            height="80%",
+            loc="center left",
+            borderpad=0.5,
+        )
+        ax_inset.imshow(favicon)
+        ax_inset.set_axis_off()
+    except Exception:
+        pass
+    ax_header.text(
+        0.08,
+        0.5,
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
+        transform=ax_header.transAxes,
+        fontsize=13,
+        fontweight="bold",
+        color="white",
+        verticalalignment="center",
+    )
+    ax_header.axhline(y=0, color="white", linewidth=0.5, alpha=0.3)
+
+    # --- Title ---
+    ax_title = fig.add_subplot(gs[1])
+    ax_title.set_axis_off()
+    title_text = f"Season {season}{mode_suffix} Partner Stats"
+    ax_title.text(
+        0.5,
+        0.5,
+        title_text,
+        transform=ax_title.transAxes,
+        fontsize=11,
+        color="white",
+        horizontalalignment="center",
+        verticalalignment="center",
+    )
+
+    # --- Body: P1 stats | center team block | P2 stats ---
+    gs_body = gs[2].subgridspec(1, 3, width_ratios=[1, 1, 1], wspace=0.05)
+
+    def _draw_player_column(ax, name, country, mmr, avg_score, best_score):
+        ax.set_axis_off()
+        flag = f" [{country}]" if country else ""
+        ax.text(
+            0.5,
+            0.93,
+            f"{name}{flag}",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=14,
+            fontweight="bold",
+        )
+        if mmr is not None:
+            ax.text(
+                0.5,
+                0.83,
+                f"{mmr:,} mmr",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color="#9CCBD6",
+                fontsize=9,
+            )
+        # Stat 1: avg score
+        ax.text(
+            0.5,
+            0.55,
+            f"{avg_score:.2f}",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=20,
+            fontweight="bold",
+        )
+        ax.text(
+            0.5,
+            0.45,
+            "avg score",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="#9CCBD6",
+            fontsize=9,
+        )
+        # Stat 2: best score
+        ax.text(
+            0.5,
+            0.20,
+            f"{best_score}",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=20,
+            fontweight="bold",
+        )
+        ax.text(
+            0.5,
+            0.10,
+            "best score",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="#9CCBD6",
+            fontsize=9,
+        )
+
+    ax_p1 = fig.add_subplot(gs_body[0])
+    _draw_player_column(
+        ax_p1,
+        p1,
+        stats.get("p1_country", ""),
+        stats.get("p1_mmr"),
+        stats["p1_avg_score"],
+        stats["p1_best_score"],
+    )
+
+    ax_center = fig.add_subplot(gs_body[1])
+    ax_center.set_axis_off()
+    win_color = "#7CFF9E"
+    loss_color = "#FF7C8A"
+    num_box = HPacker(
+        children=[
+            TextArea(
+                str(stats["wins"]),
+                textprops=dict(color=win_color, fontsize=28, fontweight="bold"),
+            ),
+            TextArea(
+                "-",
+                textprops=dict(color="white", fontsize=28, fontweight="bold"),
+            ),
+            TextArea(
+                str(stats["losses"]),
+                textprops=dict(color=loss_color, fontsize=28, fontweight="bold"),
+            ),
+        ],
+        align="center",
+        pad=0,
+        sep=8,
+    )
+    ax_center.add_artist(
+        AnchoredOffsetbox(
+            loc="center",
+            child=num_box,
+            frameon=False,
+            pad=0,
+            bbox_to_anchor=(0.5, 0.93),
+            bbox_transform=ax_center.transAxes,
+        )
+    )
+    label_box = HPacker(
+        children=[
+            TextArea(
+                "wins",
+                textprops=dict(color=win_color, fontsize=9, fontweight="bold"),
+            ),
+            TextArea(
+                "losses",
+                textprops=dict(color=loss_color, fontsize=9, fontweight="bold"),
+            ),
+        ],
+        align="center",
+        pad=0,
+        sep=10,
+    )
+    ax_center.add_artist(
+        AnchoredOffsetbox(
+            loc="center",
+            child=label_box,
+            frameon=False,
+            pad=0,
+            bbox_to_anchor=(0.5, 0.78),
+            bbox_transform=ax_center.transAxes,
+        )
+    )
+    sub_caption = (
+        f"S{season}{_mode_caption(game_mode)} · "
+        f"{stats['shared']} match"
+        + ("es" if stats["shared"] != 1 else "")
+        + " together"
+    )
+    ax_center.text(
+        0.5,
+        0.68,
+        sub_caption,
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color="#9CCBD6",
+        fontsize=8,
+    )
+    # Win rate (sits a bit below the W-L block to balance the card)
+    ax_center.text(
+        0.5,
+        0.45,
+        f"{stats['win_rate'] * 100:.1f}%",
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color="white",
+        fontsize=20,
+        fontweight="bold",
+    )
+    ax_center.text(
+        0.5,
+        0.35,
+        "win rate",
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color="#9CCBD6",
+        fontsize=9,
+    )
+    # Total MMR delta (vertically aligned with side columns' best score block)
+    total_delta = stats["total_delta"]
+    delta_color = (
+        win_color if total_delta > 0 else (loss_color if total_delta < 0 else "white")
+    )
+    ax_center.text(
+        0.5,
+        0.20,
+        f"{total_delta:+,d}",
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color=delta_color,
+        fontsize=20,
+        fontweight="bold",
+    )
+    ax_center.text(
+        0.5,
+        0.10,
+        "mmr delta",
+        transform=ax_center.transAxes,
+        ha="center",
+        va="center",
+        color="#9CCBD6",
+        fontsize=9,
+    )
+
+    ax_p2 = fig.add_subplot(gs_body[2])
+    _draw_player_column(
+        ax_p2,
+        p2,
+        stats.get("p2_country", ""),
+        stats.get("p2_mmr"),
+        stats["p2_avg_score"],
+        stats["p2_best_score"],
+    )
+
+    # --- Highlight cards: best win + worst loss together ---
+    gs_high = gs[3].subgridspec(1, 2, wspace=0.04)
+
+    def _short(n, max_len=12):
+        return n if len(n) <= max_len else n[: max_len - 1] + "…"
+
+    def _draw_highlight(ax, owner, partner_name, match):
+        ax.set_axis_off()
+        ax.add_patch(
+            mpatches.FancyBboxPatch(
+                (0.01, 0.05),
+                0.98,
+                0.9,
+                boxstyle="round,pad=0.01,rounding_size=0.02",
+                linewidth=0.8,
+                edgecolor="#3a5a8a",
+                facecolor="#0a2d61",
+                transform=ax.transAxes,
+            )
+        )
+        ax.text(
+            0.5,
+            0.82,
+            f"{owner}'s best performance",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=11,
+            fontweight="bold",
+        )
+        if match:
+            meta_parts = [match["date"], f"tier {match['tier']}"]
+            if match.get("table_id") is not None:
+                meta_parts.append(f"table {match['table_id']}")
+            ax.text(
+                0.5,
+                0.60,
+                " · ".join(meta_parts),
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color="#9CCBD6",
+                fontsize=9,
+            )
+            ax.text(
+                0.5,
+                0.34,
+                f"top score: {match['self_score']} pts",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color="#7CFF9E",
+                fontsize=12,
+                fontweight="bold",
+            )
+            rank_str = (
+                f"{match['rank']}/{match['num_teams']}"
+                if match.get("num_teams")
+                else f"{match['rank']}"
+            )
+            ax.text(
+                0.5,
+                0.14,
+                f"{_short(partner_name)} scored {match['other_score']} · "
+                f"placed {rank_str} · {match['delta']:+d} mmr",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color="#9CCBD6",
+                fontsize=9,
+            )
+        else:
+            ax.text(
+                0.5,
+                0.40,
+                "No matches yet.",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color="#9CCBD6",
+                fontsize=9,
+            )
+
+    ax_h1 = fig.add_subplot(gs_high[0])
+    _draw_highlight(ax_h1, p1, p2, stats.get("p1_best_match"))
+    ax_h2 = fig.add_subplot(gs_high[1])
+    _draw_highlight(ax_h2, p2, p1, stats.get("p2_best_match"))
+
+    # --- Recent matches ---
+    if recent:
+        ax_rec = fig.add_subplot(gs[4])
+        ax_rec.set_axis_off()
+        n1, n2 = _short(p1, 16), _short(p2, 16)
+        rec_headers = [
+            "Date",
+            "Tier",
+            f"{n1}\nScore",
+            f"{n2}\nScore",
+            "Rank",
+            "MMR Δ",
+        ]
+        rec_cells = []
+        for r in recent:
+            rank_str = (
+                f"{r['rank']}/{r['num_teams']}"
+                if r.get("num_teams")
+                else f"{r['rank']}"
+            )
+            rec_cells.append(
+                [
+                    r["date"],
+                    r["tier"],
+                    f"{r['p1_score']}",
+                    f"{r['p2_score']}",
+                    rank_str,
+                    f"{r['delta']:+d}",
+                ]
+            )
+        rec_table = ax_rec.table(
+            cellText=rec_cells,
+            colLabels=rec_headers,
+            cellLoc="center",
+            bbox=[0, 0, 1, 1],
+        )
+        rec_table.auto_set_font_size(False)
+        rec_table.set_fontsize(10)
+        n_cols = len(rec_headers)
+        for col in range(n_cols):
+            h = rec_table[(0, col)]
+            h.set_facecolor("#08234a")
+            h.set_edgecolor("white")
+            h.set_text_props(color="white", fontweight="bold")
+        delta_col = rec_headers.index("MMR Δ")
+        for row_i in range(1, len(rec_cells) + 1):
+            for col in range(n_cols):
+                cell = rec_table[(row_i, col)]
+                cell.set_edgecolor("#3a5a8a")
+                cell.set_linewidth(0.5)
+                cell.set_facecolor("#0a2d61" if row_i % 2 == 1 else "#0d3674")
+                cell.set_text_props(color="white")
+            delta = recent[row_i - 1]["delta"]
+            if delta > 0:
+                rec_table[(row_i, delta_col)].set_text_props(
+                    color="#7CFF9E", fontweight="bold"
+                )
+            elif delta < 0:
+                rec_table[(row_i, delta_col)].set_text_props(
+                    color="#FF7C8A", fontweight="bold"
+                )
+
+    fig.savefig(b, format="png", bbox_inches="tight", dpi=150, pad_inches=0.1)
+    b.seek(0)
+    fig.clf()
+
+    return b
+
+
+def create_h2h_plot(
+    stats: dict,
+    season: int,
+    game_mode: str,
+):
+    b = BytesIO()
+
+    matplotlib.rcParams.update(
+        matplotlib.rc_params_from_file("src/common/lounge_style.mplstyle")
+    )
+
+    mode_suffix = _mode_suffix(game_mode)
 
     p1, p2 = stats["p1_name"], stats["p2_name"]
     recent = stats["recent"]
@@ -628,7 +1382,7 @@ def create_h2h_plot(
     ax_header.text(
         0.08,
         0.5,
-        "MKCentral MKWorld Lounge",
+        f"MKCentral {cfg.DISPLAY_NAME} Lounge",
         transform=ax_header.transAxes,
         fontsize=13,
         fontweight="bold",
@@ -640,7 +1394,7 @@ def create_h2h_plot(
     # --- Title ---
     ax_title = fig.add_subplot(gs[1])
     ax_title.set_axis_off()
-    title_text = f"Season {season} ({game_mode_display}) Head-to-Head"
+    title_text = f"Season {season}{mode_suffix} Head-to-Head"
     ax_title.text(
         0.5,
         0.5,
@@ -786,7 +1540,7 @@ def create_h2h_plot(
         fontsize=11,
     )
     sub_caption = (
-        f"S{season} · {game_mode_display} · "
+        f"S{season}{_mode_caption(game_mode)} · "
         f"{stats['shared']} opponent match" + ("es" if stats["shared"] != 1 else "")
     )
     ax_center.text(

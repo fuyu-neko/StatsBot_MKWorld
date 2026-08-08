@@ -1,6 +1,6 @@
 [project]
 name = "StatsBot_MKWorld"
-version = "0.1.0"
+version = "1.0.0"
 description = ""
 requires-python = ">=3.13"
 dependencies = [
@@ -9,6 +9,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "matplotlib>=3.10.8",
     "numpy>=2.4.2",
+    "tzdata>=2026.2",
 ]
 
 [dependency-groups]
@@ -26,7 +27,9 @@ line-length = 88
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
+ignore = [
+    "E501",  # Line too long
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
